@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import prisma from '@/lib/db'
 import logger from '@/lib/logger'
-import { ApiResponse, PaginatedResponse, ValidationError } from '@/types'
+import { ApiResponse, PaginatedResponse } from '@/types'
 import { generateApiKey, hashApiKey, getApiKeyPrefix } from '@/lib/api-keys'
 import { getAuthUser } from '@/lib/auth'
 

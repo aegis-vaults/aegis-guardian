@@ -65,5 +65,11 @@
     "prettier": "^3.7.3",
     "prisma": "^5.22.0",
     "tsx": "^4.21.0"
+  },
+  "optionalDependencies": {
+    "@next/swc-linux-x64-gnu": "^16.0.6",
+    "@next/swc-linux-x64-musl": "^16.0.6",
+    "@next/swc-darwin-x64": "^16.0.6",
+    "@next/swc-darwin-arm64": "^16.0.6"
   }
 }
