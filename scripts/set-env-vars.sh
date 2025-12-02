@@ -76,3 +76,4 @@ echo "  railway variables --service $SERVICE_NAME --set BASE_URL=https://your-ur
 echo "  railway variables --service $SERVICE_NAME --set ACTIONS_BASE_URL=https://your-url.railway.app/api/actions"
 echo "  railway variables --service $SERVICE_NAME --set NEXT_PUBLIC_API_URL=https://your-url.railway.app"
 
+

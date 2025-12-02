@@ -1,0 +1,15 @@
+# Aegis Guardian Nixpacks Configuration
+# This file configures Nixpacks as a fallback if Railway doesn't use Dockerfile
+# The .npmrc file prevents optional dependencies (usb, node-hid) from being installed
+
+[phases.setup]
+nixPkgs = ["nodejs_20"]
+
+[phases.install]
+cmds = ["npm ci"]
+
+[phases.build]
+cmds = ["npm run build"]
+
+[start]
+cmd = "npm start"

@@ -82,7 +82,7 @@ Railway will automatically inject `DATABASE_URL` and `REDIS_URL` when you add th
 ```bash
 # Application
 NODE_ENV=production
-BASE_URL=https://your-app-name.up.railway.app
+BASE_URL=https://aegis-guardian-production.up.railway.app
 APP_VERSION=1.0.0
 LOG_LEVEL=info
 
@@ -103,16 +103,16 @@ JWT_SECRET=<your-generated-jwt-secret>
 WEBHOOK_HMAC_SECRET=<your-generated-hmac-secret>
 
 # Actions/Blink URLs
-ACTIONS_BASE_URL=https://your-app-name.up.railway.app/api/actions
-BLINK_ICON_VAULT=https://your-app-name.up.railway.app/icons/aegis-vault.png
-BLINK_ICON_SHIELD=https://your-app-name.up.railway.app/icons/aegis-shield.png
-BLINK_ICON_BLOCKED=https://your-app-name.up.railway.app/icons/aegis-blocked.png
+ACTIONS_BASE_URL=https://aegis-guardian-production.up.railway.app/api/actions
+BLINK_ICON_VAULT=https://aegis-guardian-production.up.railway.app/icons/aegis-vault.png
+BLINK_ICON_SHIELD=https://aegis-guardian-production.up.railway.app/icons/aegis-shield.png
+BLINK_ICON_BLOCKED=https://aegis-guardian-production.up.railway.app/icons/aegis-blocked.png
 
 # CORS
-CORS_ORIGINS=https://app.aegis.finance,https://aegis.finance
+CORS_ORIGINS=https://aegis-vaults.xyz,https://www.aegis-vaults.xyz
 
 # Next.js
-NEXT_PUBLIC_API_URL=https://your-app-name.up.railway.app
+NEXT_PUBLIC_API_URL=https://aegis-guardian-production.up.railway.app
 ```
 
 #### Optional Variables:
@@ -353,7 +353,7 @@ Update the following environment variables with this URL:
 ### 1. Health Check
 
 ```bash
-curl https://your-app-name.up.railway.app/api/health
+curl https://aegis-guardian-production.up.railway.app/api/health
 ```
 
 **Expected Response:**
@@ -403,17 +403,17 @@ Use the provided smoke test script (see below) or manually test:
 
 ```bash
 # List vaults
-curl https://your-app-name.up.railway.app/api/vaults
+curl https://aegis-guardian-production.up.railway.app/api/vaults
 
 # Get analytics
-curl https://your-app-name.up.railway.app/api/analytics/global
+curl https://aegis-guardian-production.up.railway.app/api/analytics/global
 ```
 
 ### 5. Test Blink/Actions Endpoint
 
 ```bash
 # Replace with actual vault and nonce
-curl https://your-app-name.up.railway.app/api/actions/YOUR_VAULT_ADDRESS/0
+curl https://aegis-guardian-production.up.railway.app/api/actions/YOUR_VAULT_ADDRESS/0
 ```
 
 **Expected Response:** Blink metadata JSON.
@@ -504,7 +504,7 @@ VACUUM ANALYZE;
 
 **Diagnosis:**
 ```bash
-curl https://your-app-name.up.railway.app/api/health
+curl https://aegis-guardian-production.up.railway.app/api/health
 ```
 
 **Common Causes:**
@@ -574,15 +574,15 @@ railway run npx prisma migrate reset --force
 **Solution:**
 1. Add frontend domain to `CORS_ORIGINS`:
    ```
-   CORS_ORIGINS=https://app.aegis.finance,https://staging.aegis.finance
+   CORS_ORIGINS=https://aegis-vaults.xyz,https://www.aegis-vaults.xyz
    ```
 
 2. Verify CORS headers in API responses:
    ```bash
-   curl -H "Origin: https://app.aegis.finance" \
+   curl -H "Origin: https://aegis-vaults.xyz" \
         -H "Access-Control-Request-Method: GET" \
         -X OPTIONS \
-        https://your-app-name.up.railway.app/api/vaults
+        https://aegis-guardian-production.up.railway.app/api/vaults
    ```
 
 ### Issue: Out of Memory
@@ -698,7 +698,7 @@ chmod +x scripts/smoke-test.sh
 
 Run it:
 ```bash
-./scripts/smoke-test.sh https://your-app-name.up.railway.app
+./scripts/smoke-test.sh https://aegis-guardian-production.up.railway.app
 ```
 
 ---

@@ -174,3 +174,4 @@ echo -e "4. Set CORS origins (if needed):"
 echo -e "   ${BLUE}railway variables --service ${SERVICE_NAME} --set CORS_ORIGINS=https://your-frontend.com${NC}"
 echo ""
 
+

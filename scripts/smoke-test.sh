@@ -173,7 +173,7 @@ echo ""
 
 # Test 18: CORS Preflight
 echo -n "Testing: CORS Preflight ... "
-cors_response=$(curl -s -X OPTIONS -H "Origin: https://app.aegis.finance" -H "Access-Control-Request-Method: GET" "$BASE_URL/api/vaults" -w "\n%{http_code}")
+cors_response=$(curl -s -X OPTIONS -H "Origin: https://aegis-vaults.xyz" -H "Access-Control-Request-Method: GET" "$BASE_URL/api/vaults" -w "\n%{http_code}")
 cors_status=$(echo "$cors_response" | tail -n1)
 
 if [ "$cors_status" -eq 200 ] || [ "$cors_status" -eq 204 ]; then

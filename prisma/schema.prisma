@@ -37,6 +37,7 @@ model User {
   // Relations
   vaults        Vault[]
   teamMembers   TeamMember[]
+  apiKeys       ApiKey[]
 
   @@index([walletAddress])
   @@index([email])
@@ -328,4 +329,41 @@ model DailyMetrics {
   @@unique([date, vaultId])
   @@index([date])
   @@index([vaultId])
+}
+
+// API Keys for programmatic SDK access
+model ApiKey {
+  id          String   @id @default(cuid())
+
+  // API key details
+  key         String   @unique @db.VarChar(64) // SHA-256 hash of the actual key
+  name        String   @db.VarChar(100) // User-friendly name for the key
+  prefix      String   @db.VarChar(12) // First 8 chars for display (e.g., "ak_live_xxx")
+
+  // Owner
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Scope & permissions
+  vaultId     String?  // If set, key is scoped to this vault only
+  permissions String[] // Array of permissions (e.g., ["vault:read", "vault:write"])
+
+  // Status
+  isActive    Boolean  @default(true)
+  lastUsedAt  DateTime?
+
+  // Rate limiting
+  rateLimit   Int      @default(100) // Requests per minute
+
+  // Expiration
+  expiresAt   DateTime?
+
+  // Metadata
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+  @@index([vaultId])
+  @@index([isActive])
+  @@index([key])
 }

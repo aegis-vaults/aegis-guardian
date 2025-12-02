@@ -4,6 +4,7 @@ import prisma from '@/lib/db'
 import { CacheService } from '@/lib/redis'
 import logger from '@/lib/logger'
 import { SolanaPublicKeySchema, NotFoundError } from '@/types'
+import { getAuthContext, hasVaultAccess } from '@/lib/auth'
 
 const cache = new CacheService()
 
@@ -140,6 +141,15 @@ export async function PATCH(
   const { id } = await params
 
   try {
+    // Get authenticated user
+    const authContext = await getAuthContext(request)
+    if (!authContext) {
+      return NextResponse.json(
+        { success: false, error: 'Authentication required' },
+        { status: 401 }
+      )
+    }
+
     const body = await request.json()
 
     // Validate input
@@ -152,13 +162,29 @@ export async function PATCH(
 
     const validatedData = UpdateVaultSchema.parse(body)
 
-    // Check vault exists
+    // Check vault exists and user has access
     const existingVault = await prisma.vault.findUnique({
       where: { id },
     })
 
     if (!existingVault) {
       throw new NotFoundError('Vault not found')
+    }
+
+    // Verify ownership
+    if (existingVault.userId !== authContext.user.id) {
+      return NextResponse.json(
+        { success: false, error: 'Access denied' },
+        { status: 403 }
+      )
+    }
+
+    // If API key is vault-scoped, verify it matches
+    if (!hasVaultAccess(authContext, id)) {
+      return NextResponse.json(
+        { success: false, error: 'API key is not authorized for this vault' },
+        { status: 403 }
+      )
     }
 
     // Update vault
@@ -232,12 +258,20 @@ export async function PATCH(
  * Soft delete a vault (sets isActive = false)
  */
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
 
   try {
+    // Get authenticated user
+    const authContext = await getAuthContext(request)
+    if (!authContext) {
+      return NextResponse.json(
+        { success: false, error: 'Authentication required' },
+        { status: 401 }
+      )
+    }
 
     // Check vault exists
     const existingVault = await prisma.vault.findUnique({
@@ -246,6 +280,22 @@ export async function DELETE(
 
     if (!existingVault) {
       throw new NotFoundError('Vault not found')
+    }
+
+    // Verify ownership
+    if (existingVault.userId !== authContext.user.id) {
+      return NextResponse.json(
+        { success: false, error: 'Access denied' },
+        { status: 403 }
+      )
+    }
+
+    // If API key is vault-scoped, verify it matches
+    if (!hasVaultAccess(authContext, id)) {
+      return NextResponse.json(
+        { success: false, error: 'API key is not authorized for this vault' },
+        { status: 403 }
+      )
     }
 
     // Soft delete (set isActive = false)

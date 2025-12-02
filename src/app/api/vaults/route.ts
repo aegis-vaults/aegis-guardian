@@ -4,6 +4,7 @@ import prisma from '@/lib/db'
 import { CacheService } from '@/lib/redis'
 import logger from '@/lib/logger'
 import { ApiResponse, PaginatedResponse, SolanaPublicKeySchema, ValidationError } from '@/types'
+import { getAuthUser } from '@/lib/auth'
 
 const cache = new CacheService()
 
@@ -18,9 +19,13 @@ const cache = new CacheService()
  * - owner: Filter by owner address
  * - guardian: Filter by guardian address
  * - isActive: Filter by active status
+ * - myVaults: If authenticated, filter to only user's vaults (default: false)
  */
 export async function GET(request: NextRequest) {
   try {
+    // Get authenticated user (optional for this endpoint)
+    const user = await getAuthUser(request)
+
     const searchParams = request.nextUrl.searchParams
     const page = Math.max(1, parseInt(searchParams.get('page') || '1'))
     const pageSize = Math.min(100, Math.max(1, parseInt(searchParams.get('pageSize') || '20')))
@@ -29,9 +34,24 @@ export async function GET(request: NextRequest) {
     const isActive = searchParams.get('isActive')
       ? searchParams.get('isActive') === 'true'
       : undefined
+    const myVaults = searchParams.get('myVaults') === 'true'
 
-    // Build cache key
-    const cacheKey = `vaults:list:${page}:${pageSize}:${owner || ''}:${guardian || ''}:${isActive}`
+    // If myVaults is requested, user must be authenticated
+    if (myVaults && !user) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'AUTHENTICATION_REQUIRED',
+            message: 'Authentication required to filter by your vaults',
+          },
+        } as ApiResponse<never>,
+        { status: 401 }
+      )
+    }
+
+    // Build cache key (include userId if filtering by user)
+    const cacheKey = `vaults:list:${page}:${pageSize}:${owner || ''}:${guardian || ''}:${isActive}:${myVaults && user ? user.id : ''}`
 
     // Try cache first
     const cached = await cache.get<PaginatedResponse<unknown>>(cacheKey)
@@ -44,6 +64,7 @@ export async function GET(request: NextRequest) {
       ...(owner && { owner }),
       ...(guardian && { guardian }),
       ...(isActive !== undefined && { isActive }),
+      ...(myVaults && user && { userId: user.id }),
     }
 
     // Execute queries in parallel

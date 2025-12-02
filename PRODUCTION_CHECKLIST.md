@@ -112,7 +112,7 @@ Copy this list to Railway dashboard → Variables:
 ```bash
 # Application
 NODE_ENV=production
-BASE_URL=https://your-app-name.up.railway.app
+BASE_URL=https://aegis-guardian-production.up.railway.app
 APP_VERSION=1.0.0
 LOG_LEVEL=info
 PORT=3000
@@ -143,13 +143,13 @@ SESSION_TIMEOUT=3600
 # API
 RATE_LIMIT_MAX=100
 RATE_LIMIT_WINDOW_MS=60000
-CORS_ORIGINS=https://app.aegis.finance,https://aegis.finance
+CORS_ORIGINS=https://aegis-vaults.xyz,https://www.aegis-vaults.xyz
 
 # Actions/Blinks
-ACTIONS_BASE_URL=https://your-app-name.up.railway.app/api/actions
-BLINK_ICON_VAULT=https://your-app-name.up.railway.app/icons/aegis-vault.png
-BLINK_ICON_SHIELD=https://your-app-name.up.railway.app/icons/aegis-shield.png
-BLINK_ICON_BLOCKED=https://your-app-name.up.railway.app/icons/aegis-blocked.png
+ACTIONS_BASE_URL=https://aegis-guardian-production.up.railway.app/api/actions
+BLINK_ICON_VAULT=https://aegis-guardian-production.up.railway.app/icons/aegis-vault.png
+BLINK_ICON_SHIELD=https://aegis-guardian-production.up.railway.app/icons/aegis-shield.png
+BLINK_ICON_BLOCKED=https://aegis-guardian-production.up.railway.app/icons/aegis-blocked.png
 
 # Webhooks
 WEBHOOKS_ENABLED=true
@@ -169,7 +169,7 @@ EXPERIMENTAL_FEATURES_ENABLED=false
 REQUEST_TRACING_ENABLED=true
 
 # Next.js
-NEXT_PUBLIC_API_URL=https://your-app-name.up.railway.app
+NEXT_PUBLIC_API_URL=https://aegis-guardian-production.up.railway.app
 ```
 
 #### Optional Variables (if using)
@@ -255,7 +255,7 @@ After getting the Railway public URL, update these variables:
 ### 1. Health Check
 
 ```bash
-curl https://your-app-name.up.railway.app/api/health
+curl https://aegis-guardian-production.up.railway.app/api/health
 ```
 
 **Expected Response:**
@@ -289,7 +289,7 @@ INFO: WebSocket event listener started
 
 ```bash
 chmod +x scripts/smoke-test.sh
-./scripts/smoke-test.sh https://your-app-name.up.railway.app
+./scripts/smoke-test.sh https://aegis-guardian-production.up.railway.app
 ```
 
 - [ ] All smoke tests passed
@@ -300,16 +300,16 @@ chmod +x scripts/smoke-test.sh
 
 ```bash
 # List vaults
-curl https://your-app-name.up.railway.app/api/vaults
+curl https://aegis-guardian-production.up.railway.app/api/vaults
 
 # Global analytics
-curl https://your-app-name.up.railway.app/api/analytics/global
+curl https://aegis-guardian-production.up.railway.app/api/analytics/global
 
 # List transactions
-curl https://your-app-name.up.railway.app/api/transactions
+curl https://aegis-guardian-production.up.railway.app/api/transactions
 
 # List overrides
-curl https://your-app-name.up.railway.app/api/overrides
+curl https://aegis-guardian-production.up.railway.app/api/overrides
 ```
 
 - [ ] Vaults endpoint working
@@ -322,7 +322,7 @@ curl https://your-app-name.up.railway.app/api/overrides
 If you have a vault with an override:
 
 ```bash
-curl https://your-app-name.up.railway.app/api/actions/YOUR_VAULT_ADDRESS/0
+curl https://aegis-guardian-production.up.railway.app/api/actions/YOUR_VAULT_ADDRESS/0
 ```
 
 - [ ] Actions endpoint returns Blink metadata
@@ -366,14 +366,14 @@ DBSIZE
 - [ ] SENTRY_DSN configured
 - [ ] First error test sent:
   ```bash
-  curl https://your-app-name.up.railway.app/api/test-error
+  curl https://aegis-guardian-production.up.railway.app/api/test-error
   ```
 - [ ] Error appears in Sentry dashboard
 
 ### 3. Custom Monitoring
 
 - [ ] Uptime monitoring configured (UptimeRobot, Pingdom, etc.)
-  - URL: https://your-app-name.up.railway.app/api/health
+  - URL: https://aegis-guardian-production.up.railway.app/api/health
   - Interval: 5 minutes
   - Alert threshold: 2 consecutive failures
 
@@ -426,7 +426,7 @@ Calculate hit rate: `hits / (hits + misses) * 100`
 Use the smoke test script with timing:
 
 ```bash
-./scripts/smoke-test.sh https://your-app-name.up.railway.app true
+./scripts/smoke-test.sh https://aegis-guardian-production.up.railway.app true
 ```
 
 **Target response times:**

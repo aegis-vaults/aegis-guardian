@@ -1,6 +1,6 @@
 # Aegis Guardian - API Documentation
 
-**Base URL:** `https://your-guardian-app.up.railway.app`
+**Base URL:** `https://aegis-guardian-production.up.railway.app`
 **API Version:** v1
 **Authentication:** Wallet signature-based (where required)
 
@@ -183,7 +183,7 @@ List all vaults with pagination and filtering.
 
 **Example Request:**
 ```bash
-curl "https://your-app.railway.app/api/vaults?page=1&pageSize=10&isActive=true"
+curl "https://aegis-guardian-production.up.railway.app/api/vaults?page=1&pageSize=10&isActive=true"
 ```
 
 **Example Response:**
@@ -236,7 +236,7 @@ Get a specific vault by ID or public key.
 
 **Example Request:**
 ```bash
-curl "https://your-app.railway.app/api/vaults/clxyz123"
+curl "https://aegis-guardian-production.up.railway.app/api/vaults/clxyz123"
 ```
 
 **Example Response:**
@@ -287,7 +287,7 @@ Create a new vault record. Typically called by the event listener, but can be us
 
 **Example Request:**
 ```bash
-curl -X POST "https://your-app.railway.app/api/vaults" \
+curl -X POST "https://aegis-guardian-production.up.railway.app/api/vaults" \
   -H "Content-Type: application/json" \
   -d '{
     "publicKey": "VaultPDA1111111111111111111111111111111",
@@ -339,7 +339,7 @@ List all transactions with pagination and filtering.
 
 **Example Request:**
 ```bash
-curl "https://your-app.railway.app/api/transactions?status=BLOCKED&page=1&pageSize=10"
+curl "https://aegis-guardian-production.up.railway.app/api/transactions?status=BLOCKED&page=1&pageSize=10"
 ```
 
 **Example Response:**
@@ -384,7 +384,7 @@ Get a specific transaction by ID or signature.
 
 **Example Request:**
 ```bash
-curl "https://your-app.railway.app/api/transactions/cltxn123"
+curl "https://aegis-guardian-production.up.railway.app/api/transactions/cltxn123"
 ```
 
 **Example Response:**
@@ -431,7 +431,7 @@ List all override requests with pagination and filtering.
 
 **Example Request:**
 ```bash
-curl "https://your-app.railway.app/api/overrides?status=PENDING"
+curl "https://aegis-guardian-production.up.railway.app/api/overrides?status=PENDING"
 ```
 
 **Example Response:**
@@ -451,7 +451,7 @@ curl "https://your-app.railway.app/api/overrides?status=PENDING"
         "canExecuteAfter": "1733144400",
         "expiresAt": "1733148000",
         "status": "PENDING",
-        "blinkUrl": "https://your-app.railway.app/api/actions/VaultPDA.../1",
+        "blinkUrl": "https://aegis-guardian-production.up.railway.app/api/actions/VaultPDA.../1",
         "createdAt": "2025-12-02T10:00:00.000Z"
       }
     ],
@@ -478,7 +478,7 @@ Get a specific override request.
 
 **Example Request:**
 ```bash
-curl "https://your-app.railway.app/api/overrides/clovr123"
+curl "https://aegis-guardian-production.up.railway.app/api/overrides/clovr123"
 ```
 
 **Example Response:**
@@ -496,7 +496,7 @@ curl "https://your-app.railway.app/api/overrides/clovr123"
     "canExecuteAfter": "1733144400",
     "expiresAt": "1733148000",
     "status": "PENDING",
-    "blinkUrl": "https://your-app.railway.app/api/actions/VaultPDA.../1",
+    "blinkUrl": "https://aegis-guardian-production.up.railway.app/api/actions/VaultPDA.../1",
     "createdAt": "2025-12-02T10:00:00.000Z",
     "vault": {
       "publicKey": "VaultPDA1111111111111111111111111111111",
@@ -523,7 +523,7 @@ Get global analytics across all vaults.
 
 **Example Request:**
 ```bash
-curl "https://your-app.railway.app/api/analytics/global"
+curl "https://aegis-guardian-production.up.railway.app/api/analytics/global"
 ```
 
 **Example Response:**
@@ -563,7 +563,7 @@ Get analytics for a specific vault.
 
 **Example Request:**
 ```bash
-curl "https://your-app.railway.app/api/analytics/VaultPDA1111111111111111111111111111111"
+curl "https://aegis-guardian-production.up.railway.app/api/analytics/VaultPDA1111111111111111111111111111111"
 ```
 
 **Example Response:**
@@ -605,7 +605,7 @@ Get spending trend over time for a vault.
 
 **Example Request:**
 ```bash
-curl "https://your-app.railway.app/api/analytics/VaultPDA.../spending-trend?days=7"
+curl "https://aegis-guardian-production.up.railway.app/api/analytics/VaultPDA.../spending-trend?days=7"
 ```
 
 **Example Response:**
@@ -646,7 +646,7 @@ Get fee collection analytics.
 
 **Example Request:**
 ```bash
-curl "https://your-app.railway.app/api/analytics/fees"
+curl "https://aegis-guardian-production.up.railway.app/api/analytics/fees"
 ```
 
 **Example Response:**
@@ -683,7 +683,7 @@ List all webhook subscriptions.
 
 **Example Request:**
 ```bash
-curl "https://your-app.railway.app/api/webhooks" \
+curl "https://aegis-guardian-production.up.railway.app/api/webhooks" \
   -H "Authorization: Bearer <signature>"
 ```
 
@@ -732,7 +732,7 @@ Create a new webhook subscription.
 
 **Example Request:**
 ```bash
-curl -X POST "https://your-app.railway.app/api/webhooks" \
+curl -X POST "https://aegis-guardian-production.up.railway.app/api/webhooks" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <signature>" \
   -d '{
@@ -768,7 +768,7 @@ Delete a webhook subscription.
 
 **Example Request:**
 ```bash
-curl -X DELETE "https://your-app.railway.app/api/webhooks/clwhk123" \
+curl -X DELETE "https://aegis-guardian-production.up.railway.app/api/webhooks/clwhk123" \
   -H "Authorization: Bearer <signature>"
 ```
 
@@ -800,14 +800,14 @@ Get Blink metadata for an override approval.
 
 **Example Request:**
 ```bash
-curl "https://your-app.railway.app/api/actions/VaultPDA.../1"
+curl "https://aegis-guardian-production.up.railway.app/api/actions/VaultPDA.../1"
 ```
 
 **Example Response:**
 ```json
 {
   "type": "action",
-  "icon": "https://your-app.railway.app/icons/aegis-shield.png",
+  "icon": "https://aegis-guardian-production.up.railway.app/icons/aegis-shield.png",
   "title": "Approve Aegis Override",
   "description": "Approve override request #1 for vault VaultPDA...",
   "label": "Approve",
@@ -815,7 +815,7 @@ curl "https://your-app.railway.app/api/actions/VaultPDA.../1"
     "actions": [
       {
         "label": "Approve",
-        "href": "https://your-app.railway.app/api/actions/VaultPDA.../1"
+        "href": "https://aegis-guardian-production.up.railway.app/api/actions/VaultPDA.../1"
       }
     ]
   }
@@ -843,7 +843,7 @@ Generate unsigned transaction for override approval.
 
 **Example Request:**
 ```bash
-curl -X POST "https://your-app.railway.app/api/actions/VaultPDA.../1" \
+curl -X POST "https://aegis-guardian-production.up.railway.app/api/actions/VaultPDA.../1" \
   -H "Content-Type: application/json" \
   -d '{"account": "OwnerWalletAddress111111111111111111111"}'
 ```
@@ -927,7 +927,7 @@ function verifyWebhook(payload: string, signature: string, secret: string): bool
     "requestedBy": "Owner...",
     "canExecuteAfter": "1733144400",
     "expiresAt": "1733148000",
-    "blinkUrl": "https://your-app.railway.app/api/actions/VaultPDA.../1"
+    "blinkUrl": "https://aegis-guardian-production.up.railway.app/api/actions/VaultPDA.../1"
   }
 }
 ```
@@ -967,7 +967,7 @@ The Aegis SDK queries Guardian API for analytics and vault information.
 import { AegisSDK } from '@aegis/sdk'
 
 const sdk = new AegisSDK({
-  guardianUrl: 'https://your-app.railway.app',
+  guardianUrl: 'https://aegis-guardian-production.up.railway.app',
   cluster: 'devnet'
 })
 
