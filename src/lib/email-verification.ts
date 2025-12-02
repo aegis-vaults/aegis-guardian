@@ -26,6 +26,12 @@ export async function sendVerificationEmail(
   email: string,
   token: string
 ): Promise<void> {
+  // Check if SendGrid is configured
+  if (!process.env.SENDGRID_API_KEY) {
+    logger.error('SENDGRID_API_KEY not configured')
+    throw new Error('Email service not configured. Please contact support.')
+  }
+
   try {
     const verifyUrl = `${process.env.NEXT_PUBLIC_GUARDIAN_URL || 'http://localhost:3001'}/api/user/email/verify/${token}`
 
@@ -98,6 +104,12 @@ This link will expire in 24 hours. If you didn't request this verification, you 
  * Send test notification email
  */
 export async function sendTestEmail(email: string): Promise<void> {
+  // Check if SendGrid is configured
+  if (!process.env.SENDGRID_API_KEY) {
+    logger.error('SENDGRID_API_KEY not configured')
+    throw new Error('Email service not configured. Please contact support.')
+  }
+
   try {
     const msg = {
       to: email,
