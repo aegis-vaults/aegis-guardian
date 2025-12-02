@@ -8,7 +8,7 @@ import type { NextRequest } from 'next/server'
 export function middleware(request: NextRequest) {
   // Get allowed origins from environment variable or use defaults
   const allowedOrigins = process.env.CORS_ORIGINS
-    ? process.env.CORS_ORIGINS.split(',')
+    ? process.env.CORS_ORIGINS.split(',').map((origin) => origin.trim())
     : [
         'https://aegis-vaults.xyz',
         'https://www.aegis-vaults.xyz',
@@ -20,6 +20,11 @@ export function middleware(request: NextRequest) {
 
   const origin = request.headers.get('origin')
   const isAllowedOrigin = origin && allowedOrigins.includes(origin)
+
+  // Log CORS check for debugging (only in development or when origin is blocked)
+  if (origin && !isAllowedOrigin && process.env.NODE_ENV === 'development') {
+    console.log('[CORS] Blocked origin:', origin, 'Allowed:', allowedOrigins)
+  }
 
   // Handle preflight requests
   if (request.method === 'OPTIONS') {
@@ -55,7 +60,7 @@ export function middleware(request: NextRequest) {
     )
     response.headers.set(
       'Access-Control-Allow-Headers',
-      'Content-Type, Authorization, X-Requested-With, Accept, Origin'
+      'Content-Type, Authorization, X-Requested-With, Accept, Origin, x-user-id'
     )
   }
 

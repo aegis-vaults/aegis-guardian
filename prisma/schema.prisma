@@ -16,7 +16,7 @@ model User {
   id            String    @id @default(cuid())
   walletAddress String    @unique @db.VarChar(44)
   email         String?   @unique
-  
+
   // Subscription
   tier          VaultTier @default(PERSONAL)
   stripeCustomerId String?
@@ -24,11 +24,28 @@ model User {
   subscriptionStatus String? // active, canceled, past_due, etc.
   currentPeriodEnd DateTime?
   scheduledDowngrade VaultTier?
-  
+
+  // Email verification
+  emailVerified     Boolean   @default(false)
+  emailVerifyToken  String?   @unique
+  emailVerifyExpiry DateTime?
+
   // Notification Settings
   telegramChatId String?
+  telegramUsername String?   @db.VarChar(32)
+  telegramLinkToken String?  @unique
+  telegramLinkExpiry DateTime?
+
   discordWebhook String?
   webhookUrl     String?
+
+  // Notification Preferences
+  notifyOnBlocked   Boolean @default(true)
+  notifyOnExecuted  Boolean @default(false)
+  notifyOnOverride  Boolean @default(true)
+  quietHoursStart   Int?    // Hour (0-23)
+  quietHoursEnd     Int?    // Hour (0-23)
+  timezone          String? @db.VarChar(50)
 
   // Metadata
   createdAt     DateTime  @default(now())
@@ -41,6 +58,8 @@ model User {
 
   @@index([walletAddress])
   @@index([email])
+  @@index([emailVerifyToken])
+  @@index([telegramLinkToken])
 }
 
 enum VaultTier {

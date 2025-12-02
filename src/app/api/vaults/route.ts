@@ -5,6 +5,7 @@ import { CacheService } from '@/lib/redis'
 import logger from '@/lib/logger'
 import { ApiResponse, PaginatedResponse, SolanaPublicKeySchema, ValidationError } from '@/types'
 import { getAuthUser } from '@/lib/auth'
+import { Prisma } from '@prisma/client'
 
 const cache = new CacheService()
 
@@ -118,13 +119,33 @@ export async function GET(request: NextRequest) {
       },
     }
 
-    // Cache for 30 seconds
+    // Cache for 30 seconds (cache failures are non-blocking)
     await cache.set(cacheKey, response, 30)
 
     logger.info({ page, pageSize, total, owner, guardian }, 'Vaults listed')
 
     return NextResponse.json(response)
   } catch (error) {
+    // Handle database connection errors specifically
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError ||
+      error instanceof Prisma.PrismaClientInitializationError ||
+      error instanceof Prisma.PrismaClientRustPanicError
+    ) {
+      logger.error({ error: error.message, code: 'code' in error ? error.code : 'UNKNOWN' }, 'Database connection error')
+
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'DATABASE_UNAVAILABLE',
+            message: 'Database is temporarily unavailable. Please try again in a moment.',
+          },
+        } as ApiResponse<never>,
+        { status: 503 }
+      )
+    }
+
     logger.error({ error }, 'Failed to list vaults')
 
     return NextResponse.json(
@@ -238,6 +259,26 @@ export async function POST(request: NextRequest) {
           },
         } as ApiResponse<never>,
         { status: error.statusCode }
+      )
+    }
+
+    // Handle database connection errors specifically
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError ||
+      error instanceof Prisma.PrismaClientInitializationError ||
+      error instanceof Prisma.PrismaClientRustPanicError
+    ) {
+      logger.error({ error: error.message, code: 'code' in error ? error.code : 'UNKNOWN' }, 'Database connection error')
+
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'DATABASE_UNAVAILABLE',
+            message: 'Database is temporarily unavailable. Please try again in a moment.',
+          },
+        } as ApiResponse<never>,
+        { status: 503 }
       )
     }
 

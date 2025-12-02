@@ -221,6 +221,18 @@ export class SubscriptionError extends ApiError {
   }
 }
 
+export class ServiceUnavailableError extends ApiError {
+  constructor(service: string, details?: unknown) {
+    super(
+      'SERVICE_UNAVAILABLE',
+      `${service} is temporarily unavailable. Please try again later.`,
+      503,
+      details
+    )
+    this.name = 'ServiceUnavailableError'
+  }
+}
+
 /**
  * Subscription and tier management types
  */

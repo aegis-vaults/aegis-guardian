@@ -137,8 +137,8 @@ export class CacheService {
       await this.redis.setex(key, ttl, serialized)
       logger.debug({ key, ttl }, 'Cache set')
     } catch (error) {
-      logger.error({ error, key }, 'Failed to set cache')
-      throw error
+      // Log error but don't throw - cache failures should not break the application
+      logger.warn({ error, key }, 'Failed to set cache - continuing without cache')
     }
   }
 
@@ -169,8 +169,8 @@ export class CacheService {
       await this.redis.del(key)
       logger.debug({ key }, 'Cache deleted')
     } catch (error) {
-      logger.error({ error, key }, 'Failed to delete cache')
-      throw error
+      // Log error but don't throw - cache failures should not break the application
+      logger.warn({ error, key }, 'Failed to delete cache - continuing without cache')
     }
   }
 
@@ -186,8 +186,8 @@ export class CacheService {
         logger.debug({ pattern, count: keys.length }, 'Cache pattern deleted')
       }
     } catch (error) {
-      logger.error({ error, pattern }, 'Failed to delete cache pattern')
-      throw error
+      // Log error but don't throw - cache failures should not break the application
+      logger.warn({ error, pattern }, 'Failed to delete cache pattern - continuing without cache')
     }
   }
 }
