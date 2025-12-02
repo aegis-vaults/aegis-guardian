@@ -71,15 +71,29 @@ export class EventListenerService {
       return
     }
 
-    // For localnet, use polling instead of WebSocket (solana-test-validator doesn't support WS)
+    // Determine if we should use polling or WebSocket
+    const forcePolling = process.env.FORCE_POLLING_MODE === 'true'
     const isLocalnet = this.connection.rpcEndpoint.includes('127.0.0.1') ||
       this.connection.rpcEndpoint.includes('localhost')
+    const isDevnet = this.connection.rpcEndpoint.includes('devnet')
 
-    if (isLocalnet) {
-      logger.info('Localnet detected, using polling mode instead of WebSocket')
+    // Use polling for localnet, devnet (free tier has WebSocket auth issues), or if forced
+    if (isLocalnet || isDevnet || forcePolling) {
+      const reason = isLocalnet
+        ? 'localnet'
+        : isDevnet
+        ? 'devnet (avoiding WebSocket auth issues)'
+        : 'FORCE_POLLING_MODE=true'
+      logger.info({ reason }, 'Using polling mode for event listening')
       await this.startPolling()
     } else {
-      await this.startWebSocket()
+      // Try WebSocket first for mainnet/custom RPC, fallback to polling if it fails
+      try {
+        await this.startWebSocket()
+      } catch (error) {
+        logger.warn({ error }, 'WebSocket listener failed, falling back to polling mode')
+        await this.startPolling()
+      }
     }
   }
 
@@ -88,6 +102,9 @@ export class EventListenerService {
    */
   private async startWebSocket(): Promise<void> {
     try {
+      // Test the WebSocket connection first
+      await this.testWebSocketConnection()
+
       this.subscriptionId = this.connection.onLogs(
         this.programId,
         this.handleLogs.bind(this),
@@ -96,10 +113,57 @@ export class EventListenerService {
 
       this.isRunning = true
       logger.info({ subscriptionId: this.subscriptionId }, 'WebSocket event listener started')
+
+      // Monitor for WebSocket errors and fallback to polling if needed
+      this.setupWebSocketErrorHandling()
     } catch (error) {
       logger.error({ error }, 'Failed to start WebSocket listener')
       throw error
     }
+  }
+
+  /**
+   * Test WebSocket connection before subscribing
+   */
+  private async testWebSocketConnection(): Promise<void> {
+    try {
+      // Try to get slot to test the connection
+      await this.connection.getSlot('confirmed')
+      logger.debug('WebSocket connection test passed')
+    } catch (error) {
+      logger.error({ error }, 'WebSocket connection test failed')
+      throw new Error('WebSocket connection test failed')
+    }
+  }
+
+  /**
+   * Setup error handling for WebSocket failures
+   */
+  private setupWebSocketErrorHandling(): void {
+    // Monitor for repeated errors and switch to polling if needed
+    let errorCount = 0
+    const maxErrors = 10
+    const errorWindow = 30000 // 30 seconds
+
+    const errorHandler = setInterval(() => {
+      if (!this.isRunning) {
+        clearInterval(errorHandler)
+        return
+      }
+
+      // If we've had too many errors, switch to polling
+      if (errorCount >= maxErrors) {
+        logger.warn(
+          { errorCount },
+          'Too many WebSocket errors detected, switching to polling mode'
+        )
+        clearInterval(errorHandler)
+        this.stop().then(() => this.startPolling())
+      }
+
+      // Reset error count after window
+      errorCount = 0
+    }, errorWindow)
   }
 
   /**
