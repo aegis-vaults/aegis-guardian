@@ -11,8 +11,10 @@ import { getAuthUser } from '@/lib/auth'
  */
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params
+
   try {
     // Get authenticated user
     const user = await getAuthUser(request)
@@ -22,8 +24,6 @@ export async function DELETE(
         { status: 401 }
       )
     }
-
-    const { id } = params
 
     // Verify the API key belongs to the user
     const apiKey = await prisma.apiKey.findFirst({
@@ -70,8 +70,10 @@ export async function DELETE(
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params
+
   try {
     // Get authenticated user
     const user = await getAuthUser(request)
@@ -81,8 +83,6 @@ export async function GET(
         { status: 401 }
       )
     }
-
-    const { id } = params
 
     const apiKey = await prisma.apiKey.findFirst({
       where: {
