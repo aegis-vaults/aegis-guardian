@@ -1,0 +1,236 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
+import prisma from '@/lib/db'
+import { CacheService } from '@/lib/redis'
+import logger from '@/lib/logger'
+import { ApiResponse, PaginatedResponse, SolanaPublicKeySchema, ValidationError } from '@/types'
+
+const cache = new CacheService()
+
+/**
+ * GET /api/vaults
+ *
+ * List all vaults with pagination and filtering
+ *
+ * Query parameters:
+ * - page: Page number (default: 1)
+ * - pageSize: Items per page (default: 20, max: 100)
+ * - owner: Filter by owner address
+ * - guardian: Filter by guardian address
+ * - isActive: Filter by active status
+ */
+export async function GET(request: NextRequest) {
+  try {
+    const searchParams = request.nextUrl.searchParams
+    const page = Math.max(1, parseInt(searchParams.get('page') || '1'))
+    const pageSize = Math.min(100, Math.max(1, parseInt(searchParams.get('pageSize') || '20')))
+    const owner = searchParams.get('owner') || undefined
+    const guardian = searchParams.get('guardian') || undefined
+    const isActive = searchParams.get('isActive')
+      ? searchParams.get('isActive') === 'true'
+      : undefined
+
+    // Build cache key
+    const cacheKey = `vaults:list:${page}:${pageSize}:${owner || ''}:${guardian || ''}:${isActive}`
+
+    // Try cache first
+    const cached = await cache.get<PaginatedResponse<unknown>>(cacheKey)
+    if (cached) {
+      return NextResponse.json(cached)
+    }
+
+    // Build where clause
+    const where = {
+      ...(owner && { owner }),
+      ...(guardian && { guardian }),
+      ...(isActive !== undefined && { isActive }),
+    }
+
+    // Execute queries in parallel
+    const [vaults, total] = await Promise.all([
+      prisma.vault.findMany({
+        where,
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          publicKey: true,
+          owner: true,
+          guardian: true,
+          dailyLimit: true,
+          dailySpent: true,
+          lastResetTime: true,
+          whitelistEnabled: true,
+          whitelist: true,
+          overrideDelay: true,
+          pendingOverride: true,
+          isActive: true,
+          createdAt: true,
+          updatedAt: true,
+          _count: {
+            select: {
+              transactions: true,
+              overrides: true,
+            },
+          },
+        },
+      }),
+      prisma.vault.count({ where }),
+    ])
+
+    const response: ApiResponse<PaginatedResponse<unknown>> = {
+      success: true,
+      data: {
+        items: vaults.map((vault) => ({
+          ...vault,
+          dailyLimit: vault.dailyLimit.toString(),
+          dailySpent: vault.dailySpent.toString(),
+          lastResetTime: vault.lastResetTime.toString(),
+        })),
+        pagination: {
+          total,
+          page,
+          pageSize,
+          hasNext: page * pageSize < total,
+        },
+      },
+    }
+
+    // Cache for 30 seconds
+    await cache.set(cacheKey, response, 30)
+
+    logger.info({ page, pageSize, total, owner, guardian }, 'Vaults listed')
+
+    return NextResponse.json(response)
+  } catch (error) {
+    logger.error({ error }, 'Failed to list vaults')
+
+    return NextResponse.json(
+      {
+        success: false,
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Failed to list vaults',
+        },
+      } as ApiResponse<never>,
+      { status: 500 }
+    )
+  }
+}
+
+/**
+ * POST /api/vaults
+ *
+ * Create a new vault record (typically called by event listener)
+ *
+ * Body:
+ * {
+ *   "publicKey": "string",
+ *   "owner": "string",
+ *   "guardian": "string",
+ *   "dailyLimit": "string",
+ *   "overrideDelay": number
+ * }
+ */
+const CreateVaultSchema = z.object({
+  publicKey: SolanaPublicKeySchema,
+  owner: SolanaPublicKeySchema,
+  guardian: SolanaPublicKeySchema,
+  dailyLimit: z.string().regex(/^\d+$/, 'Daily limit must be a valid number'),
+  overrideDelay: z.number().int().min(0).max(86400), // Max 24 hours
+})
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json()
+
+    // Validate request body
+    const validationResult = CreateVaultSchema.safeParse(body)
+    if (!validationResult.success) {
+      throw new ValidationError('Invalid request body', validationResult.error.issues)
+    }
+
+    const { publicKey, owner, guardian, dailyLimit, overrideDelay } = validationResult.data
+
+    // Check if vault already exists
+    const existing = await prisma.vault.findUnique({
+      where: { publicKey },
+    })
+
+    if (existing) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'VAULT_EXISTS',
+            message: 'Vault with this public key already exists',
+          },
+        } as ApiResponse<never>,
+        { status: 409 }
+      )
+    }
+
+    // Create vault
+    const vault = await prisma.vault.create({
+      data: {
+        publicKey,
+        owner,
+        guardian,
+        dailyLimit: BigInt(dailyLimit),
+        dailySpent: BigInt(0),
+        lastResetTime: BigInt(Math.floor(Date.now() / 1000)),
+        whitelistEnabled: false,
+        whitelist: [],
+        overrideDelay,
+        pendingOverride: false,
+        isActive: true,
+      },
+    })
+
+    // Invalidate cache
+    await cache.deletePattern('vaults:list:*')
+
+    logger.info({ vaultId: vault.id, publicKey }, 'Vault created')
+
+    return NextResponse.json(
+      {
+        success: true,
+        data: {
+          ...vault,
+          dailyLimit: vault.dailyLimit.toString(),
+          dailySpent: vault.dailySpent.toString(),
+          lastResetTime: vault.lastResetTime.toString(),
+        },
+      } as ApiResponse<unknown>,
+      { status: 201 }
+    )
+  } catch (error) {
+    if (error instanceof ValidationError) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: error.code,
+            message: error.message,
+            details: error.details,
+          },
+        } as ApiResponse<never>,
+        { status: error.statusCode }
+      )
+    }
+
+    logger.error({ error }, 'Failed to create vault')
+
+    return NextResponse.json(
+      {
+        success: false,
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Failed to create vault',
+        },
+      } as ApiResponse<never>,
+      { status: 500 }
+    )
+  }
+}

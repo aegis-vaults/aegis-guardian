@@ -1,0 +1,717 @@
+import { Connection, PublicKey, Logs } from '@solana/web3.js'
+import { createLogger } from '../logger'
+import { withTransaction } from '../db'
+import { CacheService } from '../redis'
+import {
+  EventDiscriminator,
+  VaultInitializedEvent,
+  TransactionExecutedEvent,
+  TransactionBlockedEvent,
+  OverrideRequestedEvent,
+  OverrideApprovedEvent,
+  PolicyUpdatedEvent,
+} from '@/types'
+
+const logger = createLogger({ service: 'event-listener' })
+const cache = new CacheService()
+
+/**
+ * Solana event listener service
+ * Monitors on-chain events from aegis-protocol program
+ *
+ * Architecture:
+ * - Connects to Solana RPC via WebSocket
+ * - Subscribes to program logs
+ * - Parses base64-encoded event data
+ * - Stores events in PostgreSQL
+ * - Invalidates relevant caches
+ * - Triggers notifications via webhooks
+ */
+export class EventListenerService {
+  private connection: Connection
+  private programId: PublicKey
+  private subscriptionId: number | null = null
+  private isRunning: boolean = false
+
+  constructor(rpcUrl: string, programId: string) {
+    // Handle WebSocket endpoint
+    let wsEndpoint: string
+    if (rpcUrl.startsWith('http://') || rpcUrl.startsWith('https://')) {
+      // For HTTP RPC, derive WebSocket endpoint
+      if (rpcUrl.includes('127.0.0.1') || rpcUrl.includes('localhost')) {
+        // Local validator uses same port for WS
+        wsEndpoint = rpcUrl.replace('http://', 'ws://')
+      } else {
+        // Public RPC uses wss
+        wsEndpoint = rpcUrl.replace('https://', 'wss://').replace('http://', 'ws://')
+      }
+    } else {
+      wsEndpoint = rpcUrl
+    }
+
+    this.connection = new Connection(rpcUrl, {
+      commitment: 'confirmed',
+      wsEndpoint,
+    })
+    this.programId = new PublicKey(programId)
+    logger.info({ programId, rpcUrl, wsEndpoint }, 'Event listener initialized')
+  }
+
+  /**
+   * Start listening to program events
+   */
+  async start(): Promise<void> {
+    if (this.isRunning) {
+      logger.warn('Event listener already running')
+      return
+    }
+
+    // For localnet, use polling instead of WebSocket (solana-test-validator doesn't support WS)
+    const isLocalnet = this.connection.rpcEndpoint.includes('127.0.0.1') ||
+      this.connection.rpcEndpoint.includes('localhost')
+
+    if (isLocalnet) {
+      logger.info('Localnet detected, using polling mode instead of WebSocket')
+      await this.startPolling()
+    } else {
+      await this.startWebSocket()
+    }
+  }
+
+  /**
+   * Start WebSocket-based event listening (for devnet/mainnet)
+   */
+  private async startWebSocket(): Promise<void> {
+    try {
+      this.subscriptionId = this.connection.onLogs(
+        this.programId,
+        this.handleLogs.bind(this),
+        'confirmed'
+      )
+
+      this.isRunning = true
+      logger.info({ subscriptionId: this.subscriptionId }, 'WebSocket event listener started')
+    } catch (error) {
+      logger.error({ error }, 'Failed to start WebSocket listener')
+      throw error
+    }
+  }
+
+  /**
+   * Start polling-based event listening (for localnet)
+   */
+  private async startPolling(): Promise<void> {
+    this.isRunning = true
+
+    // Poll for new signatures every 2 seconds
+    const pollInterval = 2000
+    let lastSignature: string | null = null
+
+    const poll = async () => {
+      if (!this.isRunning) return
+
+      try {
+        // Get recent signatures for the program
+        const signatures = await this.connection.getSignaturesForAddress(
+          this.programId,
+          { limit: 10 },
+          'confirmed'
+        )
+
+        // Process new signatures in reverse order (oldest first)
+        const newSignatures = signatures.reverse()
+
+        for (const sigInfo of newSignatures) {
+          // Skip if we've already processed this signature
+          if (lastSignature && sigInfo.signature === lastSignature) {
+            break
+          }
+
+          // Fetch transaction details
+          const tx = await this.connection.getTransaction(sigInfo.signature, {
+            maxSupportedTransactionVersion: 0,
+          })
+
+          if (tx && tx.meta && !tx.meta.err) {
+            // Extract logs and process
+            const logs = tx.meta.logMessages || []
+            await this.handleLogs({
+              signature: sigInfo.signature,
+              logs,
+              err: null,
+            })
+          }
+        }
+
+        // Update last processed signature
+        if (newSignatures.length > 0) {
+          const lastSig = newSignatures[newSignatures.length - 1]
+          if (lastSig && lastSig.signature) {
+            lastSignature = lastSig.signature
+          }
+        }
+      } catch (error) {
+        logger.error({ error }, 'Error during polling')
+      }
+
+      // Schedule next poll
+      setTimeout(poll, pollInterval)
+    }
+
+    // Start polling
+    poll()
+    logger.info({ pollInterval }, 'Polling event listener started')
+  }
+
+  /**
+   * Stop listening to program events
+   */
+  async stop(): Promise<void> {
+    if (!this.isRunning || this.subscriptionId === null) {
+      return
+    }
+
+    try {
+      await this.connection.removeOnLogsListener(this.subscriptionId)
+      this.isRunning = false
+      this.subscriptionId = null
+      logger.info('Event listener stopped')
+    } catch (error) {
+      logger.error({ error }, 'Failed to stop event listener')
+      throw error
+    }
+  }
+
+  /**
+   * Handle incoming log messages from Solana
+   */
+  private async handleLogs(logs: Logs): Promise<void> {
+    const { signature, logs: logMessages, err } = logs
+
+    if (err) {
+      logger.debug({ signature, error: err }, 'Transaction failed, skipping')
+      return
+    }
+
+    try {
+      // Find program data logs (base64 encoded event data)
+      const dataLogs = logMessages.filter((log) => log.startsWith('Program data: '))
+
+      if (dataLogs.length === 0) {
+        return
+      }
+
+      for (const log of dataLogs) {
+        const base64Data = log.replace('Program data: ', '')
+        await this.processEventData(base64Data, signature)
+      }
+    } catch (error) {
+      logger.error({ error, signature }, 'Error processing logs')
+    }
+  }
+
+  /**
+   * Process base64-encoded event data
+   */
+  private async processEventData(base64Data: string, signature: string): Promise<void> {
+    try {
+      const buffer = Buffer.from(base64Data, 'base64')
+
+      // First 8 bytes are the event discriminator
+      if (buffer.length < 8) {
+        logger.debug('Event data too short, skipping')
+        return
+      }
+
+      const discriminator = buffer.slice(0, 8).toString('hex')
+      const eventData = buffer.slice(8)
+
+      logger.debug({ discriminator, signature }, 'Processing event')
+
+      switch (`0x${discriminator}`) {
+        case EventDiscriminator.VaultInitialized:
+          await this.handleVaultInitialized(eventData, signature)
+          break
+        case EventDiscriminator.TransactionExecuted:
+          await this.handleTransactionExecuted(eventData, signature)
+          break
+        case EventDiscriminator.TransactionBlocked:
+          await this.handleTransactionBlocked(eventData, signature)
+          break
+        case EventDiscriminator.OverrideRequested:
+          await this.handleOverrideRequested(eventData, signature)
+          break
+        case EventDiscriminator.OverrideApproved:
+          await this.handleOverrideApproved(eventData, signature)
+          break
+        case EventDiscriminator.PolicyUpdated:
+          await this.handlePolicyUpdated(eventData, signature)
+          break
+        default:
+          logger.debug({ discriminator }, 'Unknown event discriminator')
+      }
+    } catch (error) {
+      logger.error({ error, signature }, 'Failed to process event data')
+    }
+  }
+
+  /**
+   * Handle VaultInitialized event
+   */
+  private async handleVaultInitialized(data: Buffer, signature: string): Promise<void> {
+    const event = this.parseVaultInitializedEvent(data)
+
+    logger.info({ event, signature }, 'Vault initialized')
+
+    await withTransaction(async (tx) => {
+      await tx.vault.create({
+        data: {
+          publicKey: event.vaultPda,
+          owner: event.owner,
+          guardian: event.guardian,
+          dailyLimit: event.dailyLimit,
+          dailySpent: BigInt(0),
+          lastResetTime: event.timestamp,
+          whitelistEnabled: false,
+          whitelist: [],
+          overrideDelay: event.overrideDelay,
+          pendingOverride: false,
+          isActive: true,
+        },
+      })
+    })
+
+    // Invalidate vault cache
+    await cache.delete(`vault:${event.vaultPda}`)
+    await cache.deletePattern('vaults:list:*')
+  }
+
+  /**
+   * Handle TransactionExecuted event
+   */
+  private async handleTransactionExecuted(data: Buffer, signature: string): Promise<void> {
+    const event = this.parseTransactionExecutedEvent(data)
+
+    logger.info({ event, signature }, 'Transaction executed')
+
+    await withTransaction(async (tx) => {
+      // Find the vault
+      const vault = await tx.vault.findUnique({
+        where: { publicKey: event.vaultPda },
+      })
+
+      if (!vault) {
+        logger.error({ vaultPda: event.vaultPda }, 'Vault not found for transaction')
+        return
+      }
+
+      // Create transaction record
+      const transaction = await tx.transaction.create({
+        data: {
+          signature: event.signature,
+          vaultId: vault.id,
+          from: event.from,
+          to: event.to,
+          amount: event.amount,
+          status: 'EXECUTED',
+          executedAt: new Date(Number(event.timestamp) * 1000),
+          blockTime: event.timestamp,
+        },
+      })
+
+      // Record fee if present
+      if (event.feeCollected && event.feeCollected > BigInt(0)) {
+        await (tx as any).feeCollection.create({
+          data: {
+            vaultId: vault.id,
+            transactionId: transaction.id,
+            amount: event.feeCollected,
+            timestamp: new Date(Number(event.timestamp) * 1000),
+          },
+        })
+      }
+
+      // Update vault daily spent
+      await tx.vault.update({
+        where: { id: vault.id },
+        data: {
+          dailySpent: {
+            increment: event.amount,
+          },
+        },
+      })
+    })
+
+    // Invalidate caches
+    await cache.delete(`vault:${event.vaultPda}`)
+    await cache.deletePattern(`transactions:vault:${event.vaultPda}:*`)
+  }
+
+  /**
+   * Handle TransactionBlocked event
+   */
+  private async handleTransactionBlocked(data: Buffer, signature: string): Promise<void> {
+    const event = this.parseTransactionBlockedEvent(data)
+
+    logger.info({ event, signature }, 'Transaction blocked')
+
+    await withTransaction(async (tx) => {
+      const vault = await tx.vault.findUnique({
+        where: { publicKey: event.vaultPda },
+      })
+
+      if (!vault) {
+        logger.error({ vaultPda: event.vaultPda }, 'Vault not found for blocked transaction')
+        return
+      }
+
+      await tx.transaction.create({
+        data: {
+          signature: event.signature,
+          vaultId: vault.id,
+          from: event.from,
+          to: event.to,
+          amount: event.amount,
+          status: 'BLOCKED',
+          blockReason: event.reason,
+          blockedAt: new Date(Number(event.timestamp) * 1000),
+          blockTime: event.timestamp,
+        },
+      })
+    })
+
+    // Invalidate caches
+    await cache.deletePattern(`transactions:vault:${event.vaultPda}:*`)
+  }
+
+  /**
+   * Handle OverrideRequested event
+   */
+  private async handleOverrideRequested(data: Buffer, signature: string): Promise<void> {
+    const event = this.parseOverrideRequestedEvent(data)
+
+    logger.info({ event, signature }, 'Override requested')
+
+    await withTransaction(async (tx) => {
+      const vault = await tx.vault.findUnique({
+        where: { publicKey: event.vaultPda },
+      })
+
+      if (!vault) {
+        logger.error({ vaultPda: event.vaultPda }, 'Vault not found for override request')
+        return
+      }
+
+      await tx.override.create({
+        data: {
+          vaultId: vault.id,
+          transactionId: signature,
+          nonce: event.nonce,
+          requestedBy: event.requestedBy,
+          canExecuteAfter: event.canExecuteAfter,
+          expiresAt: event.expiresAt,
+          status: 'PENDING',
+        },
+      })
+    })
+  }
+
+  /**
+   * Handle OverrideApproved event
+   */
+  private async handleOverrideApproved(data: Buffer, signature: string): Promise<void> {
+    const event = this.parseOverrideApprovedEvent(data)
+
+    logger.info({ event, signature }, 'Override approved')
+
+    await withTransaction(async (tx) => {
+      const vault = await tx.vault.findUnique({
+        where: { publicKey: event.vaultPda },
+        include: { overrides: true },
+      })
+
+      if (!vault) {
+        logger.error({ vaultPda: event.vaultPda }, 'Vault not found for override approval')
+        return
+      }
+
+      const override = vault.overrides.find((o) => o.nonce === event.nonce)
+
+      if (!override) {
+        logger.error({ nonce: event.nonce }, 'Override not found')
+        return
+      }
+
+      await tx.override.update({
+        where: { id: override.id },
+        data: {
+          status: 'APPROVED',
+          approvedBy: event.approvedBy,
+          approvedAt: new Date(Number(event.timestamp) * 1000),
+        },
+      })
+    })
+  }
+
+  /**
+   * Handle PolicyUpdated event
+   */
+  private async handlePolicyUpdated(data: Buffer, signature: string): Promise<void> {
+    const event = this.parsePolicyUpdatedEvent(data)
+
+    logger.info({ event, signature }, 'Policy updated')
+
+    await withTransaction(async (tx) => {
+      const updateData: Record<string, unknown> = {}
+
+      if (event.dailyLimit !== undefined) {
+        updateData.dailyLimit = event.dailyLimit
+      }
+
+      if (event.whitelistEnabled !== undefined) {
+        updateData.whitelistEnabled = event.whitelistEnabled
+      }
+
+      if (event.whitelist !== undefined) {
+        updateData.whitelist = event.whitelist
+      }
+
+      await tx.vault.update({
+        where: { publicKey: event.vaultPda },
+        data: updateData,
+      })
+    })
+
+    // Invalidate cache
+    await cache.delete(`vault:${event.vaultPda}`)
+  }
+
+  // Event parsing methods using Anchor's event coder
+  private parseVaultInitializedEvent(data: Buffer): VaultInitializedEvent {
+    // Event data structure from Anchor IDL:
+    // - vault_pda: PublicKey (32 bytes)
+    // - owner: PublicKey (32 bytes)
+    // - guardian: PublicKey (32 bytes)  
+    // - daily_limit: u64 (8 bytes)
+    // - override_delay: i64 (8 bytes)
+    // - timestamp: i64 (8 bytes)
+    // Total: 120 bytes
+
+    if (data.length < 120) {
+      throw new Error(`Invalid VaultInitialized event data length: ${data.length}`)
+    }
+
+    const vaultPda = new PublicKey(data.slice(0, 32)).toBase58()
+    const owner = new PublicKey(data.slice(32, 64)).toBase58()
+    const guardian = new PublicKey(data.slice(64, 96)).toBase58()
+    const dailyLimit = data.readBigUInt64LE(96)
+    const overrideDelay = Number(data.readBigInt64LE(104))
+    const timestamp = data.readBigInt64LE(112)
+
+    return {
+      vaultPda,
+      owner,
+      guardian,
+      dailyLimit,
+      overrideDelay,
+      timestamp,
+    }
+  }
+
+  private parseTransactionExecutedEvent(data: Buffer): TransactionExecutedEvent {
+    // Event data structure:
+    // - vault_pda: PublicKey (32 bytes)
+    // - signature: String (64 bytes base58, but stored as bytes)
+    // - from: PublicKey (32 bytes)
+    // - to: PublicKey (32 bytes)
+    // - amount: u64 (8 bytes)
+    // - fee_collected: u64 (8 bytes)
+    // - timestamp: i64 (8 bytes)
+
+    if (data.length < 152) {
+      throw new Error(`Invalid TransactionExecuted event data length: ${data.length}`)
+    }
+
+    const vaultPda = new PublicKey(data.slice(0, 32)).toBase58()
+    const signature = data.slice(32, 96).toString('hex')
+    const from = new PublicKey(data.slice(96, 128)).toBase58()
+    const to = new PublicKey(data.slice(128, 160)).toBase58()
+    const amount = data.readBigUInt64LE(160)
+    const feeCollected = data.readBigUInt64LE(168)
+    const timestamp = data.readBigInt64LE(176)
+
+    return {
+      vaultPda,
+      signature,
+      from,
+      to,
+      amount,
+      feeCollected,
+      timestamp,
+    }
+  }
+
+  private parseTransactionBlockedEvent(data: Buffer): TransactionBlockedEvent {
+    // Event data structure:
+    // - vault_pda: PublicKey (32 bytes)
+    // - signature: String (64 bytes)
+    // - from: PublicKey (32 bytes)
+    // - to: PublicKey (32 bytes)
+    // - amount: u64 (8 bytes)
+    // - reason: String (variable length, prefixed with u32 length)
+    // - timestamp: i64 (8 bytes)
+
+    if (data.length < 172) {
+      throw new Error(`Invalid TransactionBlocked event data length: ${data.length}`)
+    }
+
+    const vaultPda = new PublicKey(data.slice(0, 32)).toBase58()
+    const signature = data.slice(32, 96).toString('hex')
+    const from = new PublicKey(data.slice(96, 128)).toBase58()
+    const to = new PublicKey(data.slice(128, 160)).toBase58()
+    const amount = data.readBigUInt64LE(160)
+    const reasonLength = data.readUInt32LE(168)
+    const reason = data.slice(172, 172 + reasonLength).toString('utf8')
+    const timestamp = data.readBigInt64LE(172 + reasonLength)
+
+    return {
+      vaultPda,
+      signature,
+      from,
+      to,
+      amount,
+      reason,
+      timestamp,
+    }
+  }
+
+  private parseOverrideRequestedEvent(data: Buffer): OverrideRequestedEvent {
+    // Event data structure:
+    // - vault_pda: PublicKey (32 bytes)
+    // - nonce: u64 (8 bytes)
+    // - requested_by: PublicKey (32 bytes)
+    // - can_execute_after: i64 (8 bytes)
+    // - expires_at: i64 (8 bytes)
+
+    if (data.length < 88) {
+      throw new Error(`Invalid OverrideRequested event data length: ${data.length}`)
+    }
+
+    const vaultPda = new PublicKey(data.slice(0, 32)).toBase58()
+    const nonce = data.readBigUInt64LE(32)
+    const requestedBy = new PublicKey(data.slice(40, 72)).toBase58()
+    const canExecuteAfter = data.readBigInt64LE(72)
+    const expiresAt = data.readBigInt64LE(80)
+
+    // Note: timestamp is canExecuteAfter for this event
+    return {
+      vaultPda,
+      nonce,
+      requestedBy,
+      canExecuteAfter,
+      expiresAt,
+      timestamp: canExecuteAfter,
+    }
+  }
+
+  private parseOverrideApprovedEvent(data: Buffer): OverrideApprovedEvent {
+    // Event data structure:
+    // - vault_pda: PublicKey (32 bytes)
+    // - nonce: u64 (8 bytes)
+    // - approved_by: PublicKey (32 bytes)
+    // - timestamp: i64 (8 bytes)
+
+    if (data.length < 80) {
+      throw new Error(`Invalid OverrideApproved event data length: ${data.length}`)
+    }
+
+    const vaultPda = new PublicKey(data.slice(0, 32)).toBase58()
+    const nonce = data.readBigUInt64LE(32)
+    const approvedBy = new PublicKey(data.slice(40, 72)).toBase58()
+    const timestamp = data.readBigInt64LE(72)
+
+    return {
+      vaultPda,
+      nonce,
+      approvedBy,
+      timestamp,
+    }
+  }
+
+  private parsePolicyUpdatedEvent(data: Buffer): PolicyUpdatedEvent {
+    // Event data structure:
+    // - vault_pda: PublicKey (32 bytes)
+    // - daily_limit: Option<u64> (1 byte discriminator + 8 bytes if Some)
+    // - whitelist_enabled: Option<bool> (1 byte discriminator + 1 byte if Some)
+    // - whitelist: Option<Vec<PublicKey>> (1 byte discriminator + u32 length + 32*n bytes if Some)
+
+    if (data.length < 32) {
+      throw new Error(`Invalid PolicyUpdated event data length: ${data.length}`)
+    }
+
+    const vaultPda = new PublicKey(data.slice(0, 32)).toBase58()
+    let offset = 32
+
+    // Extract timestamp (should be at the end after all optional fields)
+    // For now, use current time as fallback
+    const event: PolicyUpdatedEvent = {
+      vaultPda,
+      timestamp: BigInt(Math.floor(Date.now() / 1000))
+    }
+
+    // Parse daily_limit (Option<u64>)
+    if (offset < data.length) {
+      const dailyLimitPresent = data.readUInt8(offset)
+      offset += 1
+      if (dailyLimitPresent === 1) {
+        event.dailyLimit = data.readBigUInt64LE(offset)
+        offset += 8
+      }
+    }
+
+    // Parse whitelist_enabled (Option<bool>)
+    if (offset < data.length) {
+      const whitelistEnabledPresent = data.readUInt8(offset)
+      offset += 1
+      if (whitelistEnabledPresent === 1) {
+        event.whitelistEnabled = data.readUInt8(offset) === 1
+        offset += 1
+      }
+    }
+
+    // Parse whitelist (Option<Vec<PublicKey>>)
+    if (offset < data.length) {
+      const whitelistPresent = data.readUInt8(offset)
+      offset += 1
+      if (whitelistPresent === 1) {
+        const whitelistLength = data.readUInt32LE(offset)
+        offset += 4
+        const whitelist: string[] = []
+        for (let i = 0; i < whitelistLength; i++) {
+          whitelist.push(new PublicKey(data.slice(offset, offset + 32)).toBase58())
+          offset += 32
+        }
+        event.whitelist = whitelist
+      }
+    }
+
+    return event
+  }
+}
+
+/**
+ * Create and start the event listener
+ */
+export async function startEventListener(): Promise<EventListenerService> {
+  const rpcUrl = process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com'
+  const programId = process.env.PROGRAM_ID
+
+  if (!programId) {
+    throw new Error('PROGRAM_ID environment variable is required')
+  }
+
+  const listener = new EventListenerService(rpcUrl, programId)
+  await listener.start()
+
+  return listener
+}

@@ -1,0 +1,325 @@
+// Aegis Guardian Database Schema
+// This schema defines the data model for the Guardian backend service
+
+generator client {
+  provider = "prisma-client-js"
+  previewFeatures = ["fullTextSearch", "fullTextIndex"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// User account (linked to wallet)
+model User {
+  id            String    @id @default(cuid())
+  walletAddress String    @unique @db.VarChar(44)
+  email         String?   @unique
+  
+  // Subscription
+  tier          VaultTier @default(PERSONAL)
+  stripeCustomerId String?
+  stripeSubscriptionId String?
+  subscriptionStatus String? // active, canceled, past_due, etc.
+  currentPeriodEnd DateTime?
+  scheduledDowngrade VaultTier?
+  
+  // Notification Settings
+  telegramChatId String?
+  discordWebhook String?
+  webhookUrl     String?
+
+  // Metadata
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  vaults        Vault[]
+  teamMembers   TeamMember[]
+
+  @@index([walletAddress])
+  @@index([email])
+}
+
+enum VaultTier {
+  PERSONAL
+  TEAM
+  ENTERPRISE
+}
+
+// Vault configuration - mirrors on-chain VaultConfig account
+model Vault {
+  id          String   @id @default(cuid())
+  publicKey   String   @unique // On-chain PDA address
+  owner       String   @db.VarChar(44) // Solana wallet address (base58)
+  guardian    String   @db.VarChar(44) // Guardian wallet address
+
+  // Owner relation
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id])
+
+  // Policy configuration
+  dailyLimit       BigInt  // In lamports
+  dailySpent       BigInt  @default(0)
+  lastResetTime    BigInt  // Unix timestamp
+  whitelistEnabled Boolean @default(false)
+
+  // Whitelist addresses (max 20)
+  whitelist        String[] @db.VarChar(44)
+
+  // Override configuration
+  overrideDelay    Int      // Seconds before override can execute
+  pendingOverride  Boolean  @default(false)
+
+  // Status
+  isActive         Boolean  @default(true)
+
+  // Metadata
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  // Relations
+  transactions     Transaction[]
+  overrides        Override[]
+  teamMembers      TeamMember[]
+  feeCollections   FeeCollection[]
+
+  @@index([owner])
+  @@index([guardian])
+  @@index([isActive])
+  @@index([createdAt])
+  @@index([userId])
+}
+
+// Protocol fees collected
+model FeeCollection {
+  id            String      @id @default(cuid())
+  vaultId       String
+  vault         Vault       @relation(fields: [vaultId], references: [id], onDelete: Cascade)
+  transactionId String
+  transaction   Transaction @relation(fields: [transactionId], references: [id])
+  amount        BigInt      // In lamports
+  timestamp     DateTime    @default(now())
+
+  @@index([vaultId])
+  @@index([timestamp])
+}
+
+model TeamMember {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  vaultId   String
+  vault     Vault    @relation(fields: [vaultId], references: [id], onDelete: Cascade)
+  role      TeamRole @default(MEMBER)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, vaultId])
+  @@index([userId])
+  @@index([vaultId])
+}
+
+enum TeamRole {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+// Transaction records - both executed and blocked
+model Transaction {
+  id             String            @id @default(cuid())
+  signature      String            @unique @db.VarChar(88) // Transaction signature
+  vaultId        String
+  vault          Vault             @relation(fields: [vaultId], references: [id], onDelete: Cascade)
+
+  // Transaction details
+  from           String            @db.VarChar(44)
+  to             String            @db.VarChar(44)
+  amount         BigInt            // In lamports
+  instruction    String?           // Serialized instruction data
+
+  // Status
+  status         TransactionStatus @default(PENDING)
+  blockReason    String?           // If blocked, why?
+  executedAt     DateTime?         // When transaction was executed
+  blockedAt      DateTime?         // When transaction was blocked
+
+  // Metadata
+  slot           BigInt?           // Solana slot number
+  blockTime      BigInt?           // Unix timestamp from blockchain
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  // Relations
+  blinkId        String?
+  blink          Blink?            @relation(fields: [blinkId], references: [id])
+  feeCollections FeeCollection[]
+
+  @@index([vaultId])
+  @@index([status])
+  @@index([from])
+  @@index([to])
+  @@index([createdAt])
+  @@index([executedAt])
+}
+
+enum TransactionStatus {
+  PENDING
+  EXECUTED
+  BLOCKED
+  FAILED
+}
+
+// Override requests for blocked transactions
+model Override {
+  id              String         @id @default(cuid())
+  vaultId         String
+  vault           Vault          @relation(fields: [vaultId], references: [id], onDelete: Cascade)
+
+  // Override details
+  transactionId   String         @unique
+  nonce           BigInt         // Override nonce for on-chain matching
+  requestedBy     String         @db.VarChar(44) // Who requested (owner)
+
+  // Execution window
+  canExecuteAfter BigInt         // Unix timestamp
+  expiresAt       BigInt         // Unix timestamp
+
+  // Status
+  status          OverrideStatus @default(PENDING)
+  approvedBy      String?        @db.VarChar(44) // Guardian who approved
+  approvedAt      DateTime?
+  executedAt      DateTime?
+  cancelledAt     DateTime?
+
+  // Metadata
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([vaultId])
+  @@index([status])
+  @@index([nonce])
+  @@index([canExecuteAfter])
+  @@index([createdAt])
+}
+
+enum OverrideStatus {
+  PENDING
+  APPROVED
+  EXECUTED
+  CANCELLED
+  EXPIRED
+}
+
+// Blink generation records for Actions API
+model Blink {
+  id            String      @id @default(cuid())
+
+  // Blink details
+  actionUrl     String      @unique // Actions API URL
+  title         String
+  description   String
+  iconUrl       String?
+  label         String
+
+  // Linked data
+  vaultId       String
+  overrideId    String?     // If this is for an override approval
+
+  // Status
+  isActive      Boolean     @default(true)
+  usedCount     Int         @default(0)
+
+  // Metadata
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  expiresAt     DateTime?
+
+  // Relations
+  transactions  Transaction[]
+
+  @@index([vaultId])
+  @@index([actionUrl])
+  @@index([isActive])
+  @@index([createdAt])
+}
+
+// Webhook subscriptions for notifications
+model Webhook {
+  id          String        @id @default(cuid())
+
+  // Webhook configuration
+  url         String        @db.VarChar(2048)
+  secret      String        @db.VarChar(64) // HMAC secret for signature
+
+  // Subscription details
+  vaultId     String?       // If null, subscribes to all vaults
+  events      WebhookEvent[]
+
+  // Status
+  isActive    Boolean       @default(true)
+  failureCount Int          @default(0)
+  lastSuccess DateTime?
+  lastFailure DateTime?
+
+  // Rate limiting
+  maxRetries  Int           @default(3)
+
+  // Metadata
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@index([vaultId])
+  @@index([isActive])
+}
+
+enum WebhookEvent {
+  TRANSACTION_BLOCKED
+  TRANSACTION_EXECUTED
+  OVERRIDE_REQUESTED
+  OVERRIDE_APPROVED
+  OVERRIDE_EXECUTED
+  VAULT_CREATED
+  VAULT_UPDATED
+  POLICY_UPDATED
+}
+
+// Analytics and metrics (aggregated data)
+model DailyMetrics {
+  id                    String   @id @default(cuid())
+
+  // Time bucket
+  date                  DateTime @db.Date
+  vaultId               String?  // If null, global metrics
+
+  // Transaction metrics
+  transactionsTotal     Int      @default(0)
+  transactionsExecuted  Int      @default(0)
+  transactionsBlocked   Int      @default(0)
+  transactionsFailed    Int      @default(0)
+
+  // Volume metrics (in lamports)
+  volumeTotal           BigInt   @default(0)
+  volumeExecuted        BigInt   @default(0)
+  volumeBlocked         BigInt   @default(0)
+
+  // Override metrics
+  overridesRequested    Int      @default(0)
+  overridesApproved     Int      @default(0)
+  overridesExecuted     Int      @default(0)
+
+  // Performance metrics
+  avgProcessingTimeMs   Int?     // Average processing time
+
+  // Metadata
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@unique([date, vaultId])
+  @@index([date])
+  @@index([vaultId])
+}
