@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
     const user = await getAuthUser(request)
     if (!user) {
       return NextResponse.json<ApiResponse<null>>(
-        { success: false, error: 'Authentication required' },
+        { success: false, error: { code: 'UNAUTHORIZED', message: 'Authentication required' } },
         { status: 401 }
       )
     }
@@ -83,7 +83,7 @@ export async function GET(request: NextRequest) {
   } catch (error: any) {
     logger.error('Error listing API keys:', error)
     return NextResponse.json<ApiResponse<null>>(
-      { success: false, error: 'Failed to list API keys' },
+      { success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to list API keys' } },
       { status: 500 }
     )
   }
@@ -114,7 +114,7 @@ export async function POST(request: NextRequest) {
     const user = await getAuthUser(request)
     if (!user) {
       return NextResponse.json<ApiResponse<null>>(
-        { success: false, error: 'Authentication required' },
+        { success: false, error: { code: 'UNAUTHORIZED', message: 'Authentication required' } },
         { status: 401 }
       )
     }
@@ -133,7 +133,7 @@ export async function POST(request: NextRequest) {
 
       if (!vault) {
         return NextResponse.json<ApiResponse<null>>(
-          { success: false, error: 'Vault not found or access denied' },
+          { success: false, error: { code: 'NOT_FOUND', message: 'Vault not found or access denied' } },
           { status: 404 }
         )
       }
@@ -182,14 +182,14 @@ export async function POST(request: NextRequest) {
   } catch (error: any) {
     if (error instanceof z.ZodError) {
       return NextResponse.json<ApiResponse<ValidationError>>(
-        { success: false, error: 'Validation failed', details: error.errors },
+        { success: false, error: { code: 'VALIDATION_ERROR', message: 'Validation failed', details: error.errors } },
         { status: 400 }
       )
     }
 
     logger.error('Error creating API key:', error)
     return NextResponse.json<ApiResponse<null>>(
-      { success: false, error: 'Failed to create API key' },
+      { success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to create API key' } },
       { status: 500 }
     )
   }

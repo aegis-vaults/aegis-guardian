@@ -20,7 +20,7 @@ export async function DELETE(
     const user = await getAuthUser(request)
     if (!user) {
       return NextResponse.json<ApiResponse<null>>(
-        { success: false, error: 'Authentication required' },
+        { success: false, error: { code: 'UNAUTHORIZED', message: 'Authentication required' } },
         { status: 401 }
       )
     }
@@ -35,7 +35,7 @@ export async function DELETE(
 
     if (!apiKey) {
       return NextResponse.json<ApiResponse<null>>(
-        { success: false, error: 'API key not found' },
+        { success: false, error: { code: 'NOT_FOUND', message: 'API key not found' } },
         { status: 404 }
       )
     }
@@ -57,7 +57,7 @@ export async function DELETE(
   } catch (error: any) {
     logger.error('Error revoking API key:', error)
     return NextResponse.json<ApiResponse<null>>(
-      { success: false, error: 'Failed to revoke API key' },
+      { success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to revoke API key' } },
       { status: 500 }
     )
   }
@@ -79,7 +79,7 @@ export async function GET(
     const user = await getAuthUser(request)
     if (!user) {
       return NextResponse.json<ApiResponse<null>>(
-        { success: false, error: 'Authentication required' },
+        { success: false, error: { code: 'UNAUTHORIZED', message: 'Authentication required' } },
         { status: 401 }
       )
     }
@@ -105,7 +105,7 @@ export async function GET(
 
     if (!apiKey) {
       return NextResponse.json<ApiResponse<null>>(
-        { success: false, error: 'API key not found' },
+        { success: false, error: { code: 'NOT_FOUND', message: 'API key not found' } },
         { status: 404 }
       )
     }
@@ -119,7 +119,7 @@ export async function GET(
   } catch (error: any) {
     logger.error('Error fetching API key:', error)
     return NextResponse.json<ApiResponse<null>>(
-      { success: false, error: 'Failed to fetch API key' },
+      { success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to fetch API key' } },
       { status: 500 }
     )
   }
