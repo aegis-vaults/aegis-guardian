@@ -67,13 +67,13 @@ export async function GET(
 
     if (error instanceof NotFoundError) {
       return NextResponse.json(
-        { success: false, error: error.message },
+        { success: false, error: { code: 'NOT_FOUND', message: error.message } },
         { status: 404 }
       )
     }
 
     return NextResponse.json(
-      { success: false, error: 'Internal server error' },
+      { success: false, error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
       { status: 500 }
     )
   }
@@ -194,8 +194,7 @@ export async function POST(
       return NextResponse.json(
         {
           success: false,
-          error: 'Validation error',
-          details: error.issues,
+          error: { code: 'VALIDATION_ERROR', message: 'Validation error', details: error.issues },
         },
         { status: 400 }
       )
@@ -205,8 +204,7 @@ export async function POST(
       return NextResponse.json(
         {
           success: false,
-          error: error.message,
-          details: error.details,
+          error: { code: error.code, message: error.message, details: error.details },
         },
         { status: error.statusCode }
       )
@@ -214,13 +212,13 @@ export async function POST(
 
     if (error instanceof NotFoundError) {
       return NextResponse.json(
-        { success: false, error: error.message },
+        { success: false, error: { code: 'NOT_FOUND', message: error.message } },
         { status: 404 }
       )
     }
 
     return NextResponse.json(
-      { success: false, error: 'Internal server error' },
+      { success: false, error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
       { status: 500 }
     )
   }
@@ -305,8 +303,7 @@ export async function DELETE(
       return NextResponse.json(
         {
           success: false,
-          error: error.message,
-          details: error.details,
+          error: { code: error.code, message: error.message, details: error.details },
         },
         { status: error.statusCode }
       )
@@ -314,13 +311,13 @@ export async function DELETE(
 
     if (error instanceof NotFoundError) {
       return NextResponse.json(
-        { success: false, error: error.message },
+        { success: false, error: { code: 'NOT_FOUND', message: error.message } },
         { status: 404 }
       )
     }
 
     return NextResponse.json(
-      { success: false, error: 'Internal server error' },
+      { success: false, error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
       { status: 500 }
     )
   }

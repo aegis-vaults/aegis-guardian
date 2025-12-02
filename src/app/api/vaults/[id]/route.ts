@@ -110,13 +110,13 @@ export async function GET(
 
     if (error instanceof NotFoundError) {
       return NextResponse.json(
-        { success: false, error: error.message },
+        { success: false, error: { code: 'NOT_FOUND', message: error.message } },
         { status: 404 }
       )
     }
 
     return NextResponse.json(
-      { success: false, error: 'Internal server error' },
+      { success: false, error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
       { status: 500 }
     )
   }
@@ -145,7 +145,7 @@ export async function PATCH(
     const authContext = await getAuthContext(request)
     if (!authContext) {
       return NextResponse.json(
-        { success: false, error: 'Authentication required' },
+        { success: false, error: { code: 'UNAUTHORIZED', message: 'Authentication required' } },
         { status: 401 }
       )
     }
@@ -174,7 +174,7 @@ export async function PATCH(
     // Verify ownership
     if (existingVault.userId !== authContext.user.id) {
       return NextResponse.json(
-        { success: false, error: 'Access denied' },
+        { success: false, error: { code: 'FORBIDDEN', message: 'Access denied' } },
         { status: 403 }
       )
     }
@@ -182,7 +182,7 @@ export async function PATCH(
     // If API key is vault-scoped, verify it matches
     if (!hasVaultAccess(authContext, id)) {
       return NextResponse.json(
-        { success: false, error: 'API key is not authorized for this vault' },
+        { success: false, error: { code: 'FORBIDDEN', message: 'API key is not authorized for this vault' } },
         { status: 403 }
       )
     }
@@ -231,8 +231,7 @@ export async function PATCH(
       return NextResponse.json(
         {
           success: false,
-          error: 'Validation error',
-          details: error.issues,
+          error: { code: 'VALIDATION_ERROR', message: 'Validation error', details: error.issues },
         },
         { status: 400 }
       )
@@ -240,13 +239,13 @@ export async function PATCH(
 
     if (error instanceof NotFoundError) {
       return NextResponse.json(
-        { success: false, error: error.message },
+        { success: false, error: { code: 'NOT_FOUND', message: error.message } },
         { status: 404 }
       )
     }
 
     return NextResponse.json(
-      { success: false, error: 'Internal server error' },
+      { success: false, error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
       { status: 500 }
     )
   }
@@ -268,7 +267,7 @@ export async function DELETE(
     const authContext = await getAuthContext(request)
     if (!authContext) {
       return NextResponse.json(
-        { success: false, error: 'Authentication required' },
+        { success: false, error: { code: 'UNAUTHORIZED', message: 'Authentication required' } },
         { status: 401 }
       )
     }
@@ -285,7 +284,7 @@ export async function DELETE(
     // Verify ownership
     if (existingVault.userId !== authContext.user.id) {
       return NextResponse.json(
-        { success: false, error: 'Access denied' },
+        { success: false, error: { code: 'FORBIDDEN', message: 'Access denied' } },
         { status: 403 }
       )
     }
@@ -293,7 +292,7 @@ export async function DELETE(
     // If API key is vault-scoped, verify it matches
     if (!hasVaultAccess(authContext, id)) {
       return NextResponse.json(
-        { success: false, error: 'API key is not authorized for this vault' },
+        { success: false, error: { code: 'FORBIDDEN', message: 'API key is not authorized for this vault' } },
         { status: 403 }
       )
     }
@@ -329,13 +328,13 @@ export async function DELETE(
 
     if (error instanceof NotFoundError) {
       return NextResponse.json(
-        { success: false, error: error.message },
+        { success: false, error: { code: 'NOT_FOUND', message: error.message } },
         { status: 404 }
       )
     }
 
     return NextResponse.json(
-      { success: false, error: 'Internal server error' },
+      { success: false, error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
       { status: 500 }
     )
   }

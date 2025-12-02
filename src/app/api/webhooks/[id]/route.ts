@@ -52,13 +52,13 @@ export async function GET(
 
     if (error instanceof NotFoundError) {
       return NextResponse.json(
-        { success: false, error: error.message },
+        { success: false, error: { code: 'NOT_FOUND', message: error.message } },
         { status: 404 }
       )
     }
 
     return NextResponse.json(
-      { success: false, error: 'Internal server error' },
+      { success: false, error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
       { status: 500 }
     )
   }
@@ -151,8 +151,7 @@ export async function PATCH(
       return NextResponse.json(
         {
           success: false,
-          error: 'Validation error',
-          details: error.issues,
+          error: { code: 'VALIDATION_ERROR', message: 'Validation error', details: error.issues },
         },
         { status: 400 }
       )
@@ -160,13 +159,13 @@ export async function PATCH(
 
     if (error instanceof NotFoundError) {
       return NextResponse.json(
-        { success: false, error: error.message },
+        { success: false, error: { code: 'NOT_FOUND', message: error.message } },
         { status: 404 }
       )
     }
 
     return NextResponse.json(
-      { success: false, error: 'Internal server error' },
+      { success: false, error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
       { status: 500 }
     )
   }
@@ -214,13 +213,13 @@ export async function DELETE(
 
     if (error instanceof NotFoundError) {
       return NextResponse.json(
-        { success: false, error: error.message },
+        { success: false, error: { code: 'NOT_FOUND', message: error.message } },
         { status: 404 }
       )
     }
 
     return NextResponse.json(
-      { success: false, error: 'Internal server error' },
+      { success: false, error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
       { status: 500 }
     )
   }

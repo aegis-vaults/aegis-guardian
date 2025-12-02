@@ -181,8 +181,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(response, { status: 201 })
   } catch (error: any) {
     if (error instanceof z.ZodError) {
-      return NextResponse.json<ApiResponse<ValidationError>>(
-        { success: false, error: { code: 'VALIDATION_ERROR', message: 'Validation failed', details: error.errors } },
+      return NextResponse.json<ApiResponse<null>>(
+        { success: false, error: { code: 'VALIDATION_ERROR', message: 'Validation failed', details: error.issues } },
         { status: 400 }
       )
     }

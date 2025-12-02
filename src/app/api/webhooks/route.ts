@@ -200,8 +200,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           success: false,
-          error: 'Validation error',
-          details: error.issues,
+          error: { code: 'VALIDATION_ERROR', message: 'Validation error', details: error.issues },
         },
         { status: 400 }
       )
@@ -211,8 +210,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           success: false,
-          error: error.message,
-          details: error.details,
+          error: { code: error.code, message: error.message, details: error.details },
         },
         { status: error.statusCode }
       )
