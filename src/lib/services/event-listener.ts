@@ -618,32 +618,31 @@ export class EventListenerService {
 
   // Event parsing methods using Anchor's event coder
   private parseVaultInitializedEvent(data: Buffer): VaultInitializedEvent {
-    // Event data structure from Anchor IDL:
-    // - vault_pda: PublicKey (32 bytes)
-    // - owner: PublicKey (32 bytes)
-    // - guardian: PublicKey (32 bytes)  
+    // Actual event data structure from Anchor IDL (VaultInitialized event):
+    // - vault: PublicKey (32 bytes)
+    // - authority: PublicKey (32 bytes)
     // - daily_limit: u64 (8 bytes)
-    // - override_delay: i64 (8 bytes)
     // - timestamp: i64 (8 bytes)
-    // Total: 120 bytes
+    // Total: 80 bytes
+    //
+    // Note: The protocol does not emit guardian or overrideDelay fields.
+    // We use the authority as both owner and guardian, and provide a default overrideDelay.
 
-    if (data.length < 120) {
+    if (data.length < 80) {
       throw new Error(`Invalid VaultInitialized event data length: ${data.length}`)
     }
 
-    const vaultPda = new PublicKey(data.slice(0, 32)).toBase58()
-    const owner = new PublicKey(data.slice(32, 64)).toBase58()
-    const guardian = new PublicKey(data.slice(64, 96)).toBase58()
-    const dailyLimit = data.readBigUInt64LE(96)
-    const overrideDelay = Number(data.readBigInt64LE(104))
-    const timestamp = data.readBigInt64LE(112)
+    const vault = new PublicKey(data.slice(0, 32)).toBase58()
+    const authority = new PublicKey(data.slice(32, 64)).toBase58()
+    const dailyLimit = data.readBigUInt64LE(64)
+    const timestamp = data.readBigInt64LE(72)
 
     return {
-      vaultPda,
-      owner,
-      guardian,
+      vaultPda: vault,
+      owner: authority,
+      guardian: authority, // Use authority as guardian (same person manages the vault)
       dailyLimit,
-      overrideDelay,
+      overrideDelay: 3600, // Default to 1 hour (can be updated via API later)
       timestamp,
     }
   }

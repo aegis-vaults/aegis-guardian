@@ -13,7 +13,7 @@ import { Prisma } from '@prisma/client'
  * On failure, it redirects with an error message.
  */
 export async function GET(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: Promise<{ token: string }> }
 ) {
   try {

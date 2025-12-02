@@ -32,12 +32,21 @@ export enum EventDiscriminator {
 /**
  * Parsed event data structures
  */
+
+/**
+ * VaultInitialized event from the protocol
+ * 
+ * Note: The actual protocol event only contains vault, authority, dailyLimit, and timestamp.
+ * The guardian and overrideDelay fields are populated with defaults by the event listener:
+ * - guardian is set to authority (same person manages the vault)
+ * - overrideDelay defaults to 3600 seconds (1 hour)
+ */
 export interface VaultInitializedEvent {
   vaultPda: string
   owner: string
-  guardian: string
+  guardian: string // Set to same value as owner
   dailyLimit: bigint
-  overrideDelay: number
+  overrideDelay: number // Default: 3600 (1 hour)
   timestamp: bigint
 }
 
