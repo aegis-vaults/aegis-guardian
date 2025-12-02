@@ -337,7 +337,7 @@ async function fetchWithBackoff(
  */
 
 // ❌ DON'T: Hardcode API keys
-const badExample = {
+const _badExample = {
   apiKey: 'ak_live_abc123def456...' // Never do this!
 };
 
