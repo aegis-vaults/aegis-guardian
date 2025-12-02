@@ -93,6 +93,9 @@ export async function validateApiKey(req: NextRequest): Promise<AuthContext | nu
 /**
  * Get authenticated user from request
  * Tries API key authentication first, then falls back to x-user-id header
+ *
+ * For header-based auth, x-user-id should be the wallet address.
+ * This will auto-create a user record if one doesn't exist.
  */
 export async function getAuthUser(req: NextRequest): Promise<User | null> {
     // Try API key authentication first
@@ -102,21 +105,27 @@ export async function getAuthUser(req: NextRequest): Promise<User | null> {
     }
 
     // Fall back to header-based authentication
-    const userId = req.headers.get('x-user-id')
+    // x-user-id should be the wallet address
+    const walletAddress = req.headers.get('x-user-id')
 
-    if (!userId) {
+    if (!walletAddress) {
         return null
     }
 
     try {
-        // Cast prisma to any to avoid stale type error if User model is not yet picked up by IDE
-        const user = await (prisma as any).user.findUnique({
-            where: { id: userId },
+        // Upsert user by wallet address (create if doesn't exist)
+        const user = await (prisma as any).user.upsert({
+            where: { walletAddress },
+            update: {}, // No updates on existing users
+            create: {
+                walletAddress,
+                tier: 'PERSONAL',
+            },
         })
 
         return user as User
     } catch (error) {
-        logger.error({ error, userId }, 'Failed to fetch auth user')
+        logger.error({ error, walletAddress }, 'Failed to fetch or create auth user')
         return null
     }
 }
@@ -124,6 +133,9 @@ export async function getAuthUser(req: NextRequest): Promise<User | null> {
 /**
  * Get full authentication context including API key and vault scope
  * Use this when you need to enforce vault-scoped permissions
+ *
+ * For header-based auth, x-user-id should be the wallet address.
+ * This will auto-create a user record if one doesn't exist.
  */
 export async function getAuthContext(req: NextRequest): Promise<AuthContext | null> {
     // Try API key authentication first
@@ -133,24 +145,27 @@ export async function getAuthContext(req: NextRequest): Promise<AuthContext | nu
     }
 
     // Fall back to header-based authentication
-    const userId = req.headers.get('x-user-id')
+    // x-user-id should be the wallet address
+    const walletAddress = req.headers.get('x-user-id')
 
-    if (!userId) {
+    if (!walletAddress) {
         return null
     }
 
     try {
-        const user = await (prisma as any).user.findUnique({
-            where: { id: userId },
+        // Upsert user by wallet address (create if doesn't exist)
+        const user = await (prisma as any).user.upsert({
+            where: { walletAddress },
+            update: {}, // No updates on existing users
+            create: {
+                walletAddress,
+                tier: 'PERSONAL',
+            },
         })
-
-        if (!user) {
-            return null
-        }
 
         return { user }
     } catch (error) {
-        logger.error({ error, userId }, 'Failed to fetch auth user')
+        logger.error({ error, walletAddress }, 'Failed to fetch or create auth user')
         return null
     }
 }
