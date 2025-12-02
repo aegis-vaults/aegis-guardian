@@ -116,6 +116,19 @@ export class AnalyticsService {
         count: d._count.id,
       }))
 
+      // 5. Fees collected - query FeeCollection table
+      const feesAgg = await prisma.feeCollection.aggregate({
+        where: {
+          vaultId,
+          timestamp: { gte: startDate },
+        },
+        _sum: {
+          amount: true,
+        },
+      })
+
+      const feesCollected = feesAgg._sum.amount || BigInt(0)
+
       const result = {
         totalSpent: totalSpent.toString(),
         transactionCount,
@@ -126,7 +139,7 @@ export class AnalyticsService {
         spendingByDay,
         topDestinations,
         blockReasons,
-        feesCollected: '0', // Placeholder until fee tracking is implemented
+        feesCollected: feesCollected.toString(),
       }
 
       await cache.set(cacheKey, result, 300) // 5 min TTL
@@ -184,10 +197,17 @@ export class AnalyticsService {
         vaultsByTier[g.tier] = g._count.id
       })
 
+      // Get total fees collected across all vaults
+      const totalFeesAgg = await prisma.feeCollection.aggregate({
+        _sum: {
+          amount: true,
+        },
+      })
+
       const result = {
         totalVaults,
         totalVolume: (volumeAgg._sum.volumeTotal || BigInt(0)).toString(),
-        totalFeesCollected: '0', // Placeholder
+        totalFeesCollected: (totalFeesAgg._sum.amount || BigInt(0)).toString(),
         activeVaults,
         vaultsByTier,
       }

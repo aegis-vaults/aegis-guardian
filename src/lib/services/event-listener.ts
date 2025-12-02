@@ -2,6 +2,9 @@ import { Connection, PublicKey, Logs } from '@solana/web3.js'
 import { createLogger } from '../logger'
 import { withTransaction } from '../db'
 import { CacheService } from '../redis'
+import { BlinkGeneratorService } from './blink-generator'
+import { NotificationService } from './notifications'
+import prisma from '../db'
 import {
   EventDiscriminator,
   VaultInitializedEvent,
@@ -14,6 +17,8 @@ import {
 
 const logger = createLogger({ service: 'event-listener' })
 const cache = new CacheService()
+const blinkGenerator = new BlinkGeneratorService()
+const notificationService = new NotificationService()
 
 /**
  * Solana event listener service
@@ -355,9 +360,13 @@ export class EventListenerService {
 
     logger.info({ event, signature }, 'Transaction blocked')
 
+    let transactionId: string | undefined
+    let vaultId: string | undefined
+
     await withTransaction(async (tx) => {
       const vault = await tx.vault.findUnique({
         where: { publicKey: event.vaultPda },
+        include: { user: true },
       })
 
       if (!vault) {
@@ -365,7 +374,9 @@ export class EventListenerService {
         return
       }
 
-      await tx.transaction.create({
+      vaultId = vault.id
+
+      const transaction = await tx.transaction.create({
         data: {
           signature: event.signature,
           vaultId: vault.id,
@@ -378,10 +389,67 @@ export class EventListenerService {
           blockTime: event.timestamp,
         },
       })
+
+      transactionId = transaction.id
     })
 
     // Invalidate caches
     await cache.deletePattern(`transactions:vault:${event.vaultPda}:*`)
+
+    // Generate Blink and send notifications for blocked transaction
+    if (transactionId && vaultId) {
+      try {
+        // Generate Blink for the blocked transaction
+        const { actionUrl } = await blinkGenerator.generateBlockedTransactionBlink(
+          vaultId,
+          transactionId
+        )
+
+        // Fetch vault with user details for notifications
+        const vaultWithUser = await prisma.vault.findUnique({
+          where: { id: vaultId },
+          include: { user: true },
+        })
+
+        if (vaultWithUser?.user) {
+          // Send notification via all configured channels
+          await notificationService.sendOverrideNotification(
+            {
+              id: transactionId,
+              vaultId,
+              transactionId: event.signature,
+              nonce: BigInt(0), // No override nonce for simple blocked transactions
+              requestedBy: event.from,
+              requestedAmount: event.amount,
+              destination: event.to,
+              canExecuteAfter: BigInt(0),
+              expiresAt: BigInt(0),
+              status: 'PENDING',
+              approvedBy: null,
+              approvedAt: null,
+              executedAt: null,
+              cancelledAt: null,
+              createdAt: new Date(),
+              updatedAt: new Date(),
+              blinkUrl: actionUrl,
+            } as any,
+            vaultWithUser as any,
+            vaultWithUser.user
+          )
+
+          logger.info(
+            { vaultId, transactionId, actionUrl },
+            'Blink generated and notifications sent for blocked transaction'
+          )
+        }
+      } catch (error) {
+        logger.error(
+          { error, vaultId, transactionId },
+          'Failed to generate Blink or send notifications for blocked transaction'
+        )
+        // Don't throw - event was successfully stored, notification failure shouldn't break the listener
+      }
+    }
   }
 
   /**
@@ -392,9 +460,13 @@ export class EventListenerService {
 
     logger.info({ event, signature }, 'Override requested')
 
+    let overrideId: string | undefined
+    let vaultId: string | undefined
+
     await withTransaction(async (tx) => {
       const vault = await tx.vault.findUnique({
         where: { publicKey: event.vaultPda },
+        include: { user: true },
       })
 
       if (!vault) {
@@ -402,7 +474,9 @@ export class EventListenerService {
         return
       }
 
-      await tx.override.create({
+      vaultId = vault.id
+
+      const override = await tx.override.create({
         data: {
           vaultId: vault.id,
           transactionId: signature,
@@ -413,7 +487,63 @@ export class EventListenerService {
           status: 'PENDING',
         },
       })
+
+      overrideId = override.id
     })
+
+    // Generate Blink and send notifications for override request
+    if (overrideId && vaultId) {
+      try {
+        // Fetch the override with all details
+        const override = await prisma.override.findUnique({
+          where: { id: overrideId },
+        })
+
+        if (!override) {
+          logger.error({ overrideId }, 'Override not found after creation')
+          return
+        }
+
+        // Generate Blink for override approval
+        const { actionUrl } = await blinkGenerator.generateOverrideApprovalBlink(
+          vaultId,
+          overrideId,
+          event.nonce
+        )
+
+        // Update override with Blink URL
+        await prisma.override.update({
+          where: { id: overrideId },
+          data: { blinkUrl: actionUrl } as any, // blinkUrl field needs to be added to schema
+        })
+
+        // Fetch vault with user details for notifications
+        const vaultWithUser = await prisma.vault.findUnique({
+          where: { id: vaultId },
+          include: { user: true },
+        })
+
+        if (vaultWithUser?.user) {
+          // Send notification via all configured channels
+          await notificationService.sendOverrideNotification(
+            { ...override, blinkUrl: actionUrl } as any,
+            vaultWithUser as any,
+            vaultWithUser.user
+          )
+
+          logger.info(
+            { vaultId, overrideId, actionUrl },
+            'Blink generated and notifications sent for override request'
+          )
+        }
+      } catch (error) {
+        logger.error(
+          { error, vaultId, overrideId },
+          'Failed to generate Blink or send notifications for override request'
+        )
+        // Don't throw - event was successfully stored, notification failure shouldn't break the listener
+      }
+    }
   }
 
   /**

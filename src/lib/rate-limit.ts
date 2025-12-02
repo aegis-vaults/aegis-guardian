@@ -40,7 +40,7 @@ export class RateLimiter {
             }
 
             // results[2] is the result of zcard
-            const count = results[2][1] as number
+            const count = results[2]?.[1] as number
 
             return count <= limit
         } catch (error) {

@@ -1,7 +1,6 @@
-import { Connection, Keypair, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js'
-import { Program, AnchorProvider, Wallet, Idl } from '@coral-xyz/anchor'
+import { Connection, Keypair, LAMPORTS_PER_SOL } from '@solana/web3.js'
+import { AnchorProvider, Wallet } from '@coral-xyz/anchor'
 import { PrismaClient } from '@prisma/client'
-import * as fs from 'fs'
 import * as path from 'path'
 import chalk from 'chalk'
 import dotenv from 'dotenv'
@@ -12,11 +11,7 @@ dotenv.config({ path: path.resolve(__dirname, '../.env') })
 const prisma = new PrismaClient()
 
 // Constants
-const PROGRAM_ID = new PublicKey(process.env.PROGRAM_ID || 'ET9WDoFE2bf4bSmciLL7q7sKdeSYeNkWbNMHbAMBu2ZJ')
 const RPC_URL = process.env.SOLANA_RPC_URL || 'http://127.0.0.1:8899'
-
-// Helper to wait
-const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
 async function main() {
     console.log(chalk.bold.white('\n🛡️  Aegis Integration Test Suite  🛡️\n'))

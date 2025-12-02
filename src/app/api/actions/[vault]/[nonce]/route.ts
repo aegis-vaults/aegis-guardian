@@ -52,10 +52,10 @@ const IDL: Idl = {
 }
 
 export const GET = async (
-    req: NextRequest,
-    { params }: { params: { vault: string; nonce: string } }
+    _req: NextRequest,
+    { params }: { params: Promise<{ vault: string; nonce: string }> }
 ) => {
-    const { vault: vaultAddress, nonce } = params
+    const { vault: vaultAddress, nonce } = await params
 
     try {
         // Validate inputs
@@ -137,9 +137,9 @@ export const OPTIONS = async () => {
 
 export const POST = async (
     req: NextRequest,
-    { params }: { params: { vault: string; nonce: string } }
+    { params }: { params: Promise<{ vault: string; nonce: string }> }
 ) => {
-    const { vault: vaultAddress, nonce } = params
+    const { vault: vaultAddress, nonce } = await params
 
     try {
         const body = await req.json()
@@ -209,7 +209,7 @@ export const POST = async (
             programId
         )
 
-        const instruction = await program.methods
+        const instruction = await (program.methods as any)
             .approveOverride()
             .accounts({
                 vault: vaultPda,

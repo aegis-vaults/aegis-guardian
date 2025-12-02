@@ -10,9 +10,9 @@ const analyticsService = new AnalyticsService()
 
 export const GET = async (
     req: NextRequest,
-    { params }: { params: { vault: string } }
+    { params }: { params: Promise<{ vault: string }> }
 ) => {
-    const { vault: vaultId } = params
+    const { vault: vaultId } = await params
     const searchParams = req.nextUrl.searchParams
     const range = searchParams.get('range') || '7d'
 

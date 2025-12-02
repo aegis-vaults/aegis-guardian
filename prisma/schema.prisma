@@ -59,6 +59,9 @@ model Vault {
   userId      String?
   user        User?    @relation(fields: [userId], references: [id])
 
+  // User-friendly metadata
+  name             String?  @db.VarChar(100) // User-friendly vault name
+
   // Policy configuration
   dailyLimit       BigInt  // In lamports
   dailySpent       BigInt  @default(0)
@@ -184,6 +187,9 @@ model Override {
   transactionId   String         @unique
   nonce           BigInt         // Override nonce for on-chain matching
   requestedBy     String         @db.VarChar(44) // Who requested (owner)
+  requestedAmount BigInt?        // Amount of blocked transaction (in lamports)
+  destination     String?        @db.VarChar(44) // Blocked destination address
+  blinkUrl        String?        @db.VarChar(512) // Generated Blink URL for approval
 
   // Execution window
   canExecuteAfter BigInt         // Unix timestamp

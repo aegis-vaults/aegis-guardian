@@ -386,7 +386,7 @@ export async function upgradeTier(
                 stripeCustomerId: customerId,
                 stripeSubscriptionId: subscription.id,
                 subscriptionStatus: subscription.status,
-                currentPeriodEnd: new Date(subscription.current_period_end * 1000),
+                currentPeriodEnd: new Date(((subscription as any).current_period_end as number) * 1000),
                 scheduledDowngrade: null, // Clear any pending downgrade
                 updatedAt: new Date(),
             },
@@ -605,7 +605,7 @@ export async function downgradeTier(
             }
         )
 
-        const scheduledFor = new Date(subscription.current_period_end * 1000)
+        const scheduledFor = new Date(((subscription as any).current_period_end as number) * 1000)
 
         // Update user in database
         await prisma.user.update({

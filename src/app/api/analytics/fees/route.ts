@@ -60,7 +60,7 @@ export const GET = async (req: NextRequest) => {
         // Group by day manually since Prisma doesn't support date_trunc easily in groupBy
         const feesByDayMap = new Map<string, bigint>()
         feesByTimeRaw.forEach(f => {
-            const day = f.timestamp.toISOString().split('T')[0]
+            const day = f.timestamp.toISOString().split('T')[0]!
             const amount = f._sum.amount || BigInt(0)
             feesByDayMap.set(day, (feesByDayMap.get(day) || BigInt(0)) + amount)
         })
