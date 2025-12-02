@@ -1,244 +1,246 @@
-# Guardian Event Listener - Setup Guide
+# Guardian Event Listener - Documentation
 
 ## Overview
 
-The Guardian event listener monitors on-chain events from the Aegis protocol and syncs them to the PostgreSQL database in real-time.
+The Guardian event listener automatically monitors on-chain events from the Aegis protocol and syncs them to the PostgreSQL database in real-time. It starts automatically when the Next.js server boots.
 
-## Quick Start
+## How It Works
 
-### 1. Configure Environment
+### Automatic Startup
 
-Copy the example environment file and update it:
+The event listener starts automatically when the Guardian server starts via Next.js instrumentation hooks (`src/instrumentation.ts`). No separate process or script is needed.
+
+### Connection Modes
+
+The listener automatically chooses the best connection mode:
+
+**Polling Mode (Default for Devnet):**
+- Used for devnet and localnet
+- Avoids WebSocket authentication issues
+- Checks for new transactions every 2 seconds
+- More reliable for free RPC endpoints
+
+**WebSocket Mode:**
+- Used for mainnet or custom RPC endpoints
+- Real-time event streaming
+- Falls back to polling if WebSocket fails
+
+### Environment Variables
+
 ```bash
-cd aegis-guardian
-cp .env.example .env
-```
-
-Ensure these variables are set in your `.env`:
-```bash
-# Solana Configuration
-SOLANA_RPC_URL=http://127.0.0.1:8899  # For localnet
+# Required
+SOLANA_RPC_URL=https://api.devnet.solana.com
 PROGRAM_ID=ET9WDoFE2bf4bSmciLL7q7sKdeSYeNkWbNMHbAMBu2ZJ
-SOLANA_CLUSTER=localnet
+DATABASE_URL=postgresql://...
 
-# Database
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/aegis_guardian?schema=public
-
-# Redis (optional for caching)
-REDIS_URL=redis://localhost:6379
+# Optional
+START_EVENT_LISTENER=true  # Set to false to disable auto-start
+FORCE_POLLING_MODE=true    # Force polling mode even for mainnet
 ```
 
-### 2. Start Components
+## Events Processed
 
-You need to run these in separate terminals:
+The listener processes these on-chain events:
 
-**Terminal 1 - Local Validator:**
+1. **VaultInitialized** - New vault created
+2. **TransactionExecuted** - Transaction approved and executed
+3. **TransactionBlocked** - Transaction blocked by policy
+4. **OverrideRequested** - Guardian override requested
+5. **OverrideApproved** - Override approved by guardian
+6. **PolicyUpdated** - Vault policy updated
+
+## Local Development
+
+### With Local Validator
+
 ```bash
+# Terminal 1 - Start validator
 solana-test-validator
-```
 
-**Terminal 2 - Protocol Deployment:**
-```bash
+# Terminal 2 - Deploy protocol (if needed)
 cd aegis-protocol
-anchor deploy --provider.cluster localnet
-```
+anchor deploy
 
-**Terminal 3 - Event Listener:**
-```bash
-cd aegis-guardian
-npm run listen
-```
-
-**Terminal 4 - Guardian API (optional):**
-```bash
+# Terminal 3 - Start Guardian (listener auto-starts)
 cd aegis-guardian
 npm run dev
 ```
 
-### 3. Generate Test Transactions
+The listener will automatically detect localnet and use polling mode.
 
-**Terminal 5 - Create a vault:**
-```bash
-cd aegis-protocol
-yarn generate-tx
-```
-
-The event listener (Terminal 3) should immediately show logs like:
-```
-[INFO] Event listener started successfully
-[INFO] Vault initialized { event: { vaultPda: '...', owner: '...', ... } }
-```
-
-### 4. Verify Database Sync
+### With Devnet
 
 ```bash
-cd aegis-guardian
-npm run test:integration
+# Set environment
+export SOLANA_RPC_URL=https://api.devnet.solana.com
+export PROGRAM_ID=ET9WDoFE2bf4bSmciLL7q7sKdeSYeNkWbNMHbAMBu2ZJ
+
+# Start Guardian (listener auto-starts)
+npm run dev
 ```
-
-Expected output:
-```
-✅ Found 1 recent transactions in Guardian DB
-```
-
----
-
-## Architecture
-
-### Event Flow
-
-```
-Protocol (On-Chain)
-    ↓ Emits events
-Solana RPC WebSocket
-    ↓ Streams logs
-Event Listener Service
-    ↓ Parse & validate
-PostgreSQL Database
-    ↓ Query
-Guardian API / Tests
-```
-
-### Event Types Supported
-
-1. **VaultInitialized** - When a new vault is created
-2. **TransactionExecuted** - When a guarded transaction succeeds
-3. **TransactionBlocked** - When a transaction is blocked by policy
-4. **OverrideRequested** - When an override is requested
-5. **OverrideApproved** - When an override is approved
-6. **PolicyUpdated** - When vault policy changes
-
----
-
-## Troubleshooting
-
-### Event Listener Won't Start
-
-**Problem**: `Missing required environment variables`
-**Solution**: Ensure `PROGRAM_ID`, `SOLANA_RPC_URL`, and `DATABASE_URL` are set in `.env`
-
-**Problem**: `Failed to connect to RPC`
-**Solution**: Verify `solana-test-validator` is running on port 8899
-
-**Problem**: `Database connection failed`
-**Solution**: Ensure PostgreSQL is running and DATABASE_URL is correct
-
-### Events Not Being Captured
-
-**Problem**: Listener is running but no events show up
-**Solution**: 
-1. Verify PROGRAM_ID matches deployed program
-2. Check that transactions are actually being created on-chain
-3. Look for error logs in the listener output
-
-**Problem**: `Failed to parse event data`
-**Solution**: Event structure may have changed. Check that protocol event definitions match Guardian types.
-
----
-
-## Development
-
-### Running Tests
-
-```bash
-# Run integration tests
-npm run test:integration
-
-# Check database directly
-npm run prisma:studio
-```
-
-### Monitoring Logs
-
-The event listener uses structured logging:
-```typescript
-[INFO] Event listener started
-[INFO] Vault initialized { vaultPda: '...', owner: '...', dailyLimit: 10000000000 }
-[DEBUG] Processing event { discriminator: '0x...', signature: '...' }
-[ERROR] Failed to process event { error: '...', signature: '...' }
-```
-
-### Adding New Event Types
-
-1. Define event type in `src/types/index.ts`
-2. Add discriminator to `EventDiscriminator` enum
-3. Implement parsing method in `event-listener.ts`
-4. Add handler method for database operations
-5. Update switch statement in `processEventData()`
-
----
 
 ## Production Deployment
 
-### Environment Variables
+On Railway, the listener starts automatically with the Next.js server:
 
-For production, update:
-```bash
-SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
-PROGRAM_ID=<your-deployed-program-id>
-SOLANA_CLUSTER=mainnet-beta
-EVENT_LISTENER_ENABLED=true
-EVENT_LISTENER_RESTART_DELAY=5000
+1. Push code to GitHub
+2. Railway builds and deploys
+3. Event listener starts automatically
+4. Check logs: `railway logs`
+
+Look for:
+```
+Starting event listener on server startup...
+Using polling mode for event listening { reason: 'devnet (avoiding WebSocket auth issues)' }
+Polling event listener started { pollInterval: 2000 }
 ```
 
-### Process Management
+## Monitoring
 
-Use PM2 or similar for production:
+### Check Listener Status
+
+The listener logs important events:
+
 ```bash
-# Install PM2
-npm install -g pm2
+# View logs
+railway logs
 
-# Start listener
-pm2 start npm --name "aegis-listener" -- run listen
+# Check for listener startup
+railway logs | grep "Event listener"
 
-# Start API
-pm2 start npm --name "aegis-api" -- run start
-
-# Monitor
-pm2 logs
-pm2 monit
+# Check for processed events
+railway logs | grep "Vault initialized"
 ```
 
-### Error Handling
+### Common Log Messages
 
-The listener automatically:
-- Reconnects on WebSocket disconnection
-- Logs all parsing errors without crashing
-- Validates event data structure before processing
-- Uses database transactions for atomic writes
+**Success:**
+```
+Event listener started successfully
+Vault initialized: { vaultPda: '...', owner: '...' }
+Transaction executed: { signature: '...', amount: '...' }
+```
 
----
+**Warnings:**
+```
+WebSocket listener failed, falling back to polling mode
+Using polling mode for event listening
+```
 
-## Implementation Details
+## Troubleshooting
 
-### Event Parsing
+### Event Listener Not Starting
 
-Events are emitted by Anchor as base64-encoded binary data:
-1. First 8 bytes: Event discriminator (identifies event type)
-2. Remaining bytes: Event data (borsh-serialized struct)
+Check environment variables:
+```bash
+railway variables | grep -E "(SOLANA_RPC_URL|PROGRAM_ID|DATABASE_URL)"
+```
 
-The listener:
-1. Subscribes to program logs via WebSocket
-2. Filters for "Program data:" lines
-3. Base64 decodes the data
-4. Matches discriminator to event type
-5. Parses event data according to IDL structure
-6. Stores in database
+All three must be set.
 
-### Database Schema
+### Events Not Being Processed
 
-Events are normalized into:
-- `Vault` table - Vault configurations
-- `Transaction` table - All vault transactions
-- `Override` table - Override requests/approvals
-- `FeeCollection` table - Fee tracking
+1. **Check RPC connection:**
+   ```bash
+   curl -X POST $SOLANA_RPC_URL \
+     -H "Content-Type: application/json" \
+     -d '{"jsonrpc":"2.0","id":1,"method":"getSlot"}'
+   ```
 
----
+2. **Verify program exists:**
+   ```bash
+   solana program show $PROGRAM_ID --url devnet
+   ```
 
-## Next Steps
+3. **Check database connection:**
+   ```bash
+   railway run npx prisma db pull
+   ```
 
-- [ ] Add support for event replay (historical sync)
-- [ ] Implement event batching for high throughput
-- [ ] Add Prometheus metrics
-- [ ] Create admin dashboard for monitoring
-- [ ] Add alerting for critical events
+### WebSocket 401 Errors
+
+This is normal for free devnet RPC endpoints. The listener automatically falls back to polling mode. To silence warnings, set:
+
+```bash
+FORCE_POLLING_MODE=true
+```
+
+### Database Connection Issues
+
+On Railway, ensure the Guardian service is linked to your PostgreSQL service:
+
+1. Go to Railway dashboard
+2. Check Guardian service
+3. Verify PostgreSQL is in "Connected Services"
+4. DATABASE_URL should be automatically set
+
+## Manual Control
+
+### Disable Auto-Start
+
+```bash
+START_EVENT_LISTENER=false
+```
+
+### Standalone Script (Legacy)
+
+If needed, you can still run the listener separately:
+
+```bash
+npm run listen
+```
+
+But this is **not recommended** for production. Use the auto-start functionality.
+
+## Architecture
+
+```
+┌─────────────────────┐
+│   Next.js Server    │
+│   (instrumentation) │
+└──────────┬──────────┘
+           │
+    ┌──────▼──────┐
+    │   Event     │
+    │  Listener   │
+    │  Service    │
+    └──────┬──────┘
+           │
+    ┌──────▼──────┐
+    │   Solana    │
+    │   RPC/WS    │
+    └──────┬──────┘
+           │
+    ┌──────▼──────┐
+    │ PostgreSQL  │
+    │  Database   │
+    └─────────────┘
+```
+
+## Performance
+
+**Polling Mode:**
+- Check interval: 2 seconds
+- Processes up to 10 signatures per poll
+- Suitable for devnet/testnet
+- ~30 RPC requests/minute
+
+**WebSocket Mode:**
+- Real-time event streaming
+- Suitable for mainnet with auth
+- ~1-2 RPC requests/minute
+
+## Best Practices
+
+1. **Use polling for devnet** - More reliable
+2. **Monitor Railway logs** - Check for errors
+3. **Set proper RPC URL** - Use dedicated endpoint for production
+4. **Keep database healthy** - Event processing depends on DB
+5. **Don't run multiple instances** - Can cause duplicate processing
+
+## Related Documentation
+
+- [API Documentation](./API_DOCUMENTATION.md)
+- [Database Migrations](./DATABASE_MIGRATIONS.md)
+- [Production Checklist](./PRODUCTION_CHECKLIST.md)
+- [Runbook](./RUNBOOK.md)
