@@ -27,6 +27,23 @@ export async function POST(request: NextRequest) {
       const username = update.message.from?.username
       const firstName = update.message.from?.first_name
 
+      // Handle /start command without token
+      if (text === '/start') {
+        await sendTelegramMessage(
+          chatId,
+          `🛡️ *Welcome to Aegis!*\n\n` +
+          `To link your Aegis account:\n\n` +
+          `1. Go to your Aegis dashboard settings\n` +
+          `2. Navigate to the Notifications section\n` +
+          `3. Click "Connect Telegram"\n` +
+          `4. Click the generated link\n\n` +
+          `This will send a /start command with your unique link token.\n\n` +
+          `Send /help to see available commands.`,
+          { parseMode: 'Markdown' }
+        )
+        return NextResponse.json({ ok: true })
+      }
+
       // Handle /start command for account linking
       if (text.startsWith('/start ')) {
         const token = text.split(' ')[1]

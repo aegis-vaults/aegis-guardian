@@ -39,6 +39,15 @@ export async function sendVerificationEmail(
       to: email,
       from: process.env.SENDGRID_FROM_EMAIL || 'notifications@aegis.finance',
       subject: 'Verify your Aegis email address',
+      trackingSettings: {
+        clickTracking: {
+          enable: false,
+          enableText: false,
+        },
+        openTracking: {
+          enable: false,
+        },
+      },
       html: `
         <!DOCTYPE html>
         <html>
@@ -115,6 +124,15 @@ export async function sendTestEmail(email: string): Promise<void> {
       to: email,
       from: process.env.SENDGRID_FROM_EMAIL || 'notifications@aegis.finance',
       subject: 'Test Notification from Aegis',
+      trackingSettings: {
+        clickTracking: {
+          enable: false,
+          enableText: false,
+        },
+        openTracking: {
+          enable: false,
+        },
+      },
       html: `
         <!DOCTYPE html>
         <html>
