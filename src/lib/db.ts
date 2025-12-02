@@ -29,13 +29,9 @@ if (process.env.NODE_ENV !== 'production') {
   globalForPrisma.prisma = prisma
 }
 
-// Log connection events
-prisma.$connect().then(() => {
-  logger.info('Prisma client connected to database')
-}).catch((error) => {
-  logger.error({ error }, 'Failed to connect to database')
-  process.exit(1)
-})
+// Prisma connects lazily on first query - no need to connect immediately
+// This prevents connection attempts during Next.js build phase
+// Connection will happen automatically when the first query is executed
 
 /**
  * Graceful shutdown handler for Prisma client

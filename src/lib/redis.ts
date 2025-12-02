@@ -16,12 +16,15 @@ class RedisClient {
 
   /**
    * Get the main Redis client instance (singleton)
+   * Uses lazyConnect to prevent connections during build phase
    */
   public static getInstance(): Redis {
     if (!RedisClient.instance) {
       const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379'
 
       RedisClient.instance = new Redis(redisUrl, {
+        lazyConnect: true, // Don't connect immediately - connect on first command
+        // This prevents connection attempts during Next.js build phase
         maxRetriesPerRequest: 3,
         retryStrategy(times: number) {
           const delay = Math.min(times * 50, 2000)
@@ -61,7 +64,9 @@ class RedisClient {
   public static getPubClient(): Redis {
     if (!RedisClient.pubClient) {
       const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379'
-      RedisClient.pubClient = new Redis(redisUrl)
+      RedisClient.pubClient = new Redis(redisUrl, {
+        lazyConnect: true, // Don't connect immediately
+      })
       logger.info('Redis publisher client created')
     }
     return RedisClient.pubClient
@@ -74,7 +79,9 @@ class RedisClient {
   public static getSubClient(): Redis {
     if (!RedisClient.subClient) {
       const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379'
-      RedisClient.subClient = new Redis(redisUrl)
+      RedisClient.subClient = new Redis(redisUrl, {
+        lazyConnect: true, // Don't connect immediately
+      })
       logger.info('Redis subscriber client created')
     }
     return RedisClient.subClient
