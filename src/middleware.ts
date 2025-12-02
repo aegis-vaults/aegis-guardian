@@ -41,7 +41,7 @@ export function middleware(request: NextRequest) {
     )
     response.headers.set(
       'Access-Control-Allow-Headers',
-      'Content-Type, Authorization, X-Requested-With, Accept, Origin'
+      'Content-Type, Authorization, X-Requested-With, Accept, Origin, x-user-id'
     )
     response.headers.set('Access-Control-Max-Age', '86400')
 
