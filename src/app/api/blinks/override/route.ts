@@ -202,18 +202,24 @@ export async function POST(request: NextRequest) {
     // + 640 (whitelist: 20*32) + 1 (whitelist_count) + 1 (whitelist_enabled) + 2 (fee_basis_points) 
     // + 50 (name) + 1 (name_len) + 1 (paused) = 792
     const overrideNonceOffset = 792
-    const overrideNonce = data.readBigUInt64LE(overrideNonceOffset)
+    const currentOverrideNonce = data.readBigUInt64LE(overrideNonceOffset)
     const vaultNonce = data.readBigUInt64LE(overrideNonceOffset + 8)
-
-    // Derive PDAs
+    
+    // The create_override instruction will increment the override_nonce and use that for the new override
+    // So we use currentOverrideNonce (which will become the new override's nonce after increment)
+    const overrideNonceToUse = currentOverrideNonce
+    
+    // Derive the PDA for the override that will be created
+    // Note: create_override increments the nonce FIRST, then uses it, so this PDA is correct
     const [pendingOverridePda] = PublicKey.findProgramAddressSync(
       [
         Buffer.from('override'),
         vaultPubkey.toBuffer(),
-        new BN(overrideNonce.toString()).toArrayLike(Buffer, 'le', 8),
+        new BN(overrideNonceToUse.toString()).toArrayLike(Buffer, 'le', 8),
       ],
       AEGIS_PROGRAM_ID
     )
+    
     const [vaultAuthorityPda] = deriveVaultAuthorityPda(vaultPubkey)
     const [feeTreasury] = deriveFeeTreasuryPda()
 
@@ -222,7 +228,15 @@ export async function POST(request: NextRequest) {
     const approveOverrideDisc = await getDiscriminator('approve_override')
     const executeApprovedOverrideDisc = await getDiscriminator('execute_approved_override')
 
+    // Build transaction with compute budget
+    const transaction = new Transaction()
+    
+    // Add compute budget instructions for complex transaction
+    transaction.add(ComputeBudgetProgram.setComputeUnitLimit({ units: 400000 }))
+    transaction.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 }))
+    
     // 1. Build create_override instruction
+    // Always include create - if it already exists, the program will error, but that's better than missing it
     const createOverrideData = Buffer.alloc(8 + 8 + 32 + 8 + 1)
     createOverrideDisc.copy(createOverrideData, 0)
     createOverrideData.writeBigUInt64LE(vaultNonce, 8)
@@ -240,6 +254,12 @@ export async function POST(request: NextRequest) {
       programId: AEGIS_PROGRAM_ID,
       data: createOverrideData,
     })
+    
+    transaction.add(createOverrideIx)
+    logger.info({ 
+      overrideNonce: overrideNonceToUse.toString(),
+      pendingOverridePda: pendingOverridePda.toBase58(),
+    }, 'Adding create_override instruction')
 
     // 2. Build approve_override instruction
     // Account order: vault, authority (signer), pending_override
@@ -256,6 +276,7 @@ export async function POST(request: NextRequest) {
       programId: AEGIS_PROGRAM_ID,
       data: approveOverrideData,
     })
+    transaction.add(approveOverrideIx)
 
     // 3. Build execute_approved_override instruction
     // Account order: vault, pending_override, authority (signer), vault_authority, destination, fee_treasury, system_program
@@ -276,17 +297,6 @@ export async function POST(request: NextRequest) {
       programId: AEGIS_PROGRAM_ID,
       data: executeOverrideData,
     })
-
-    // Build transaction with compute budget
-    const transaction = new Transaction()
-    
-    // Add compute budget instructions for complex transaction
-    transaction.add(ComputeBudgetProgram.setComputeUnitLimit({ units: 400000 }))
-    transaction.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 }))
-    
-    // Add all 3 override instructions
-    transaction.add(createOverrideIx)
-    transaction.add(approveOverrideIx)
     transaction.add(executeOverrideIx)
 
     // Get recent blockhash
