@@ -19,11 +19,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import {
   Connection,
   PublicKey,
-  Transaction,
   TransactionInstruction,
   SystemProgram,
   LAMPORTS_PER_SOL,
   ComputeBudgetProgram,
+  TransactionMessage,
+  VersionedTransaction,
 } from '@solana/web3.js'
 import { BN } from '@coral-xyz/anchor'
 import logger from '@/lib/logger'
@@ -229,12 +230,13 @@ export async function POST(request: NextRequest) {
     const approveOverrideDisc = await getDiscriminator('approve_override')
     const executeApprovedOverrideDisc = await getDiscriminator('execute_approved_override')
 
-    // Build transaction with compute budget
-    const transaction = new Transaction()
+    // Build all instructions
+    const instructions: TransactionInstruction[] = []
     
-    // Add compute budget instructions for complex transaction
-    transaction.add(ComputeBudgetProgram.setComputeUnitLimit({ units: 400000 }))
-    transaction.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 }))
+    // Add compute budget instructions - use high priority fee for faster confirmation on devnet
+    // Devnet can be unreliable, so we use aggressive priority fees
+    instructions.push(ComputeBudgetProgram.setComputeUnitLimit({ units: 150000 })) // Reduced from 400k - simulation shows ~45k used
+    instructions.push(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1000000 })) // 1M microLamports = high priority
     
     // 1. Build create_override instruction
     // Always include create - if it already exists, the program will error, but that's better than missing it
@@ -256,7 +258,7 @@ export async function POST(request: NextRequest) {
       data: createOverrideData,
     })
     
-    transaction.add(createOverrideIx)
+    instructions.push(createOverrideIx)
     logger.info({ 
       overrideNonce: overrideNonceToUse.toString(),
       pendingOverridePda: pendingOverridePda.toBase58(),
@@ -277,7 +279,7 @@ export async function POST(request: NextRequest) {
       programId: AEGIS_PROGRAM_ID,
       data: approveOverrideData,
     })
-    transaction.add(approveOverrideIx)
+    instructions.push(approveOverrideIx)
 
     // 3. Build execute_approved_override instruction
     // Account order: vault, pending_override, authority (signer), vault_authority, destination, fee_treasury, system_program
@@ -298,7 +300,7 @@ export async function POST(request: NextRequest) {
       programId: AEGIS_PROGRAM_ID,
       data: executeOverrideData,
     })
-    transaction.add(executeOverrideIx)
+    instructions.push(executeOverrideIx)
 
     // Verify fee treasury exists
     const feeTreasuryAccount = await connection.getAccountInfo(feeTreasury)
@@ -310,10 +312,17 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Get recent blockhash
-    const { blockhash } = await connection.getLatestBlockhash('confirmed')
-    transaction.recentBlockhash = blockhash
-    transaction.feePayer = signerPubkey
+    // Get recent blockhash with finalized commitment for better reliability
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized')
+
+    // Create versioned transaction (v0) - better supported by modern wallets and Blinks
+    const messageV0 = new TransactionMessage({
+      payerKey: signerPubkey,
+      recentBlockhash: blockhash,
+      instructions,
+    }).compileToV0Message()
+
+    const versionedTransaction = new VersionedTransaction(messageV0)
 
     logger.info({
       vault,
@@ -326,12 +335,16 @@ export async function POST(request: NextRequest) {
       feeTreasury: feeTreasury.toBase58(),
       overrideNonce: overrideNonceToUse.toString(),
       vaultNonce: vaultNonce.toString(),
-    }, 'Built override transaction, simulating...')
+      blockhash,
+      lastValidBlockHeight,
+    }, 'Built versioned override transaction, simulating...')
 
-    // Simulate transaction BEFORE returning to catch errors
+    // Simulate versioned transaction BEFORE returning to catch errors
     try {
-      // For legacy transactions, use the older API
-      const simulation = await connection.simulateTransaction(transaction)
+      const simulation = await connection.simulateTransaction(versionedTransaction, {
+        sigVerify: false,
+        replaceRecentBlockhash: false,
+      })
 
       if (simulation.value.err) {
         logger.error({
@@ -362,11 +375,8 @@ export async function POST(request: NextRequest) {
       // Continue anyway - simulation might fail for various reasons but tx could still work
     }
 
-    // Serialize transaction (without signatures)
-    const serializedTx = transaction.serialize({
-      requireAllSignatures: false,
-      verifySignatures: false,
-    })
+    // Serialize versioned transaction
+    const serializedTx = Buffer.from(versionedTransaction.serialize())
 
     logger.info({
       vault,
@@ -376,7 +386,8 @@ export async function POST(request: NextRequest) {
       signer: account,
       pendingOverride: pendingOverridePda.toBase58(),
       txSize: serializedTx.length,
-    }, 'Created complete override transaction (create + approve + execute)')
+      txVersion: 'v0',
+    }, 'Created complete versioned override transaction (create + approve + execute)')
 
     // Return Solana Actions response
     return NextResponse.json(
