@@ -242,13 +242,14 @@ export async function POST(request: NextRequest) {
     })
 
     // 2. Build approve_override instruction
+    // Account order: vault, authority (signer), pending_override
     const approveOverrideData = Buffer.alloc(8 + 8)
     approveOverrideDisc.copy(approveOverrideData, 0)
     approveOverrideData.writeBigUInt64LE(vaultNonce, 8)
 
     const approveOverrideIx = new TransactionInstruction({
       keys: [
-        { pubkey: vaultPubkey, isSigner: false, isWritable: true },
+        { pubkey: vaultPubkey, isSigner: false, isWritable: false }, // vault is NOT mut for approve
         { pubkey: signerPubkey, isSigner: true, isWritable: false },
         { pubkey: pendingOverridePda, isSigner: false, isWritable: true },
       ],
@@ -257,6 +258,7 @@ export async function POST(request: NextRequest) {
     })
 
     // 3. Build execute_approved_override instruction
+    // Account order: vault, pending_override, authority (signer), vault_authority, destination, fee_treasury, system_program
     const executeOverrideData = Buffer.alloc(8 + 8)
     executeApprovedOverrideDisc.copy(executeOverrideData, 0)
     executeOverrideData.writeBigUInt64LE(vaultNonce, 8)
@@ -264,8 +266,8 @@ export async function POST(request: NextRequest) {
     const executeOverrideIx = new TransactionInstruction({
       keys: [
         { pubkey: vaultPubkey, isSigner: false, isWritable: true },
-        { pubkey: signerPubkey, isSigner: true, isWritable: false },
         { pubkey: pendingOverridePda, isSigner: false, isWritable: true },
+        { pubkey: signerPubkey, isSigner: true, isWritable: false },
         { pubkey: vaultAuthorityPda, isSigner: false, isWritable: true },
         { pubkey: destinationPubkey, isSigner: false, isWritable: true },
         { pubkey: feeTreasury, isSigner: false, isWritable: true },
