@@ -74,6 +74,7 @@ model Vault {
   publicKey   String   @unique // On-chain PDA address
   owner       String   @db.VarChar(44) // Solana wallet address (base58)
   guardian    String   @db.VarChar(44) // Guardian wallet address
+  agentSigner String   @db.VarChar(44) // AI agent public key authorized to propose transactions
 
   // Owner relation
   userId      String?
@@ -94,6 +95,11 @@ model Vault {
   // Override configuration
   overrideDelay    Int      // Seconds before override can execute
   pendingOverride  Boolean  @default(false)
+
+  // Vault tier and fees
+  tier             VaultTier @default(PERSONAL)
+  feeBasisPoints   Int       @default(5) // Protocol fee (5 = 0.05%)
+  paused           Boolean   @default(false) // If true, all transactions blocked
 
   // Status
   isActive         Boolean  @default(true)
