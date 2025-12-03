@@ -101,6 +101,9 @@ model Vault {
   feeBasisPoints   Int       @default(5) // Protocol fee (5 = 0.05%)
   paused           Boolean   @default(false) // If true, all transactions blocked
 
+  // Vault nonce for PDA derivation (allows unlimited vaults per user)
+  vaultNonce       BigInt    @default(0)
+
   // Status
   isActive         Boolean  @default(true)
 
