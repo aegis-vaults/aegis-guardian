@@ -34,11 +34,12 @@ const AEGIS_PROGRAM_ID = new PublicKey('ET9WDoFE2bf4bSmciLL7q7sKdeSYeNkWbNMHbAMB
 // Solana RPC
 const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com'
 
-// Block reasons
+// Block reasons - must match IDL BlockReason enum order:
+// NotWhitelisted = 0, ExceededDailyLimit = 1, InsufficientFunds = 2
 const BLOCK_REASONS: Record<string, number> = {
-  exceeded_daily_limit: 0,
-  not_whitelisted: 1,
-  vault_paused: 2,
+  not_whitelisted: 0,
+  exceeded_daily_limit: 1,
+  insufficient_funds: 2,
 }
 
 // CORS headers for Solana Actions
@@ -299,10 +300,67 @@ export async function POST(request: NextRequest) {
     })
     transaction.add(executeOverrideIx)
 
+    // Verify fee treasury exists
+    const feeTreasuryAccount = await connection.getAccountInfo(feeTreasury)
+    if (!feeTreasuryAccount) {
+      logger.error({ feeTreasury: feeTreasury.toBase58() }, 'Fee treasury not initialized')
+      return NextResponse.json(
+        { error: 'Fee treasury not initialized. Contact support.' },
+        { status: 500, headers: ACTIONS_CORS_HEADERS }
+      )
+    }
+
     // Get recent blockhash
     const { blockhash } = await connection.getLatestBlockhash('confirmed')
     transaction.recentBlockhash = blockhash
     transaction.feePayer = signerPubkey
+
+    logger.info({
+      vault,
+      destination,
+      amount: amountLamports.toString(),
+      reason,
+      signer: account,
+      pendingOverride: pendingOverridePda.toBase58(),
+      vaultAuthority: vaultAuthorityPda.toBase58(),
+      feeTreasury: feeTreasury.toBase58(),
+      overrideNonce: overrideNonceToUse.toString(),
+      vaultNonce: vaultNonce.toString(),
+    }, 'Built override transaction, simulating...')
+
+    // Simulate transaction BEFORE returning to catch errors
+    try {
+      // For legacy transactions, use the older API
+      const simulation = await connection.simulateTransaction(transaction)
+
+      if (simulation.value.err) {
+        logger.error({
+          error: simulation.value.err,
+          logs: simulation.value.logs,
+          vault,
+          destination,
+          overrideNonce: overrideNonceToUse.toString(),
+        }, 'Transaction simulation failed')
+
+        // Return detailed error to user
+        const errorLogs = simulation.value.logs?.join('\n') || 'No logs available'
+        return NextResponse.json(
+          { 
+            error: `Transaction simulation failed: ${JSON.stringify(simulation.value.err)}`,
+            logs: errorLogs,
+          },
+          { status: 400, headers: ACTIONS_CORS_HEADERS }
+        )
+      }
+
+      logger.info({
+        unitsConsumed: simulation.value.unitsConsumed,
+        logs: simulation.value.logs?.slice(-5),
+      }, 'Transaction simulation successful')
+    } catch (simError: any) {
+      logger.error({ error: simError.message }, 'Failed to simulate transaction')
+      // Continue anyway - simulation might fail for various reasons but tx could still work
+    }
 
     // Serialize transaction (without signatures)
     const serializedTx = transaction.serialize({
@@ -317,6 +375,7 @@ export async function POST(request: NextRequest) {
       reason,
       signer: account,
       pendingOverride: pendingOverridePda.toBase58(),
+      txSize: serializedTx.length,
     }, 'Created complete override transaction (create + approve + execute)')
 
     // Return Solana Actions response
