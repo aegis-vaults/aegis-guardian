@@ -127,7 +127,10 @@ export class NotificationService {
         // Build detailed result summary
         const channelResults: Record<string, { success: boolean; error?: string }> = {}
         results.forEach((result, index) => {
-            const channel = channelPromises[index].channel
+            const channelInfo = channelPromises[index]
+            if (!channelInfo) return
+            
+            const channel = channelInfo.channel
             if (result.status === 'fulfilled') {
                 channelResults[channel] = { success: true }
             } else {

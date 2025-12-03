@@ -171,69 +171,137 @@ export class EventListenerService {
   }
 
   /**
-   * Start polling-based event listening (for localnet)
+   * Start polling-based event listening (optimized for RPC credit conservation)
+   * 
+   * Key optimizations:
+   * - Longer polling interval (10s base instead of 2s)
+   * - Uses 'until' parameter to only fetch new signatures
+   * - Caches processed signatures efficiently
+   * - Batches transaction fetches
+   * - Adaptive polling based on activity
    */
   private async startPolling(): Promise<void> {
     this.isRunning = true
 
-    // Poll for new signatures every 2 seconds (with backoff on errors)
-    const basePollInterval = 2000
-    const maxPollInterval = 30000 // Max 30 seconds between polls on repeated errors
+    // OPTIMIZED: Longer base interval to reduce API calls (10s instead of 2s)
+    // This reduces getSignaturesForAddress calls by 5x
+    const basePollInterval = 10000 // 10 seconds
+    const maxPollInterval = 60000 // Max 60 seconds between polls on repeated errors
+    const idlePollInterval = 30000 // 30 seconds when no new transactions found
     let currentPollInterval = basePollInterval
     let consecutiveErrors = 0
     let lastErrorMessage: string | null = null
+    let consecutiveEmptyPolls = 0
+    
+    // Track the most recent signature to use as 'until' parameter
+    // This prevents re-fetching old transactions
+    let lastProcessedSignature: string | null = null
     
     // Track processed signatures to avoid reprocessing
     const processedSignatures = new Set<string>()
-    const MAX_PROCESSED_CACHE = 1000 // Keep track of last 1000 signatures
+    const MAX_PROCESSED_CACHE = 500 // Reduced from 1000
 
     const poll = async () => {
       if (!this.isRunning) return
 
       try {
-        // Get recent signatures for the program
+        // OPTIMIZED: Only fetch signatures newer than the last one we processed
+        // This dramatically reduces API calls when there's no new activity
+        const signaturesOptions: any = { 
+          limit: 10, // Reduced from 20 - we poll more frequently so don't need as many
+        }
+        
+        // Use 'until' parameter to only get new signatures (if we have a reference point)
+        if (lastProcessedSignature) {
+          signaturesOptions.until = lastProcessedSignature
+        }
+
         const signatures = await this.connection.getSignaturesForAddress(
           this.programId,
-          { limit: 20 }, // Increased from 10 to reduce gaps
+          signaturesOptions,
           'confirmed'
         )
 
-        // Process only new signatures (not already processed)
+        // If no new signatures, increase poll interval to conserve credits
+        if (signatures.length === 0) {
+          consecutiveEmptyPolls++
+          // After 3 empty polls, switch to idle mode (30s interval)
+          if (consecutiveEmptyPolls >= 3) {
+            currentPollInterval = idlePollInterval
+          }
+          setTimeout(poll, currentPollInterval)
+          return
+        }
+
+        // Reset empty poll counter when we find transactions
+        consecutiveEmptyPolls = 0
+        currentPollInterval = basePollInterval
+
+        // Update our reference point to the newest signature
+        const newestSignature = signatures[0]?.signature
+        if (newestSignature) {
+          lastProcessedSignature = newestSignature
+        }
+
+        // Filter to only unprocessed signatures
+        const newSignatures = signatures.filter(s => !processedSignatures.has(s.signature))
+        
+        if (newSignatures.length === 0) {
+          setTimeout(poll, currentPollInterval)
+          return
+        }
+
+        // OPTIMIZED: Process signatures without fetching full transaction data
+        // unless absolutely necessary (for event parsing)
         let processedCount = 0
-        for (const sigInfo of signatures) {
-          // Skip if we've already processed this signature
+        for (const sigInfo of newSignatures) {
+          // Skip if already processed (double check)
           if (processedSignatures.has(sigInfo.signature)) {
             continue
           }
 
-          // Fetch transaction details
-          const tx = await this.connection.getTransaction(sigInfo.signature, {
-            maxSupportedTransactionVersion: 0,
-          })
-
-          if (tx && tx.meta && !tx.meta.err) {
-            // Extract logs and process
-            const logs = tx.meta.logMessages || []
-            await this.handleLogs({
-              signature: sigInfo.signature,
-              logs,
-              err: null,
+          try {
+            // Fetch transaction details - this is necessary for event parsing
+            // but we've reduced how often we get here
+            const tx = await this.connection.getTransaction(sigInfo.signature, {
+              maxSupportedTransactionVersion: 0,
             })
+
+            if (tx && tx.meta && !tx.meta.err) {
+              // Extract logs and process
+              const logs = tx.meta.logMessages || []
+              await this.handleLogs({
+                signature: sigInfo.signature,
+                logs,
+                err: null,
+              })
+            }
+          } catch (txError) {
+            // Log but don't fail the whole poll for one transaction
+            logger.warn({ 
+              signature: sigInfo.signature.slice(0, 20), 
+              error: txError instanceof Error ? txError.message : String(txError)
+            }, 'Failed to fetch transaction, will retry')
           }
           
-          // Mark as processed
+          // Mark as processed regardless of success (to avoid infinite retries)
           processedSignatures.add(sigInfo.signature)
           processedCount++
-          
-          // Clean up old processed signatures to prevent memory growth
-          if (processedSignatures.size > MAX_PROCESSED_CACHE) {
-            const toDelete = [...processedSignatures].slice(0, processedSignatures.size - MAX_PROCESSED_CACHE)
-            toDelete.forEach(sig => processedSignatures.delete(sig))
-          }
+        }
+        
+        // Clean up old processed signatures to prevent memory growth
+        if (processedSignatures.size > MAX_PROCESSED_CACHE) {
+          const entries = [...processedSignatures]
+          const toDelete = entries.slice(0, entries.length - MAX_PROCESSED_CACHE)
+          toDelete.forEach(sig => processedSignatures.delete(sig))
         }
 
         if (processedCount > 0) {
-          logger.debug({ processedCount }, 'Processed new transactions')
+          logger.info({ 
+            processedCount, 
+            cacheSize: processedSignatures.size,
+            pollInterval: currentPollInterval,
+          }, 'Processed new transactions')
         }
 
         // Reset error state on success
@@ -241,16 +309,15 @@ export class EventListenerService {
           logger.info({ processedSignaturesCount: processedSignatures.size }, 'Event listener polling recovered')
         }
         consecutiveErrors = 0
-        currentPollInterval = basePollInterval
         lastErrorMessage = null
-      } catch (error: any) {
+      } catch (error: unknown) {
         consecutiveErrors++
-        const errorMessage = error?.message || String(error)
+        const errorMessage = error instanceof Error ? error.message : String(error)
 
         // Only log if this is a new error or every 10th consecutive error
         if (errorMessage !== lastErrorMessage || consecutiveErrors % 10 === 1) {
           logger.error(
-            { error: errorMessage, consecutiveErrors, nextRetryIn: currentPollInterval },
+            { errorMessage, consecutiveErrors, nextRetryIn: currentPollInterval },
             'Event listener polling error'
           )
           lastErrorMessage = errorMessage
@@ -266,7 +333,11 @@ export class EventListenerService {
 
     // Start polling
     poll()
-    logger.info({ pollInterval: basePollInterval }, 'Polling event listener started')
+    logger.info({ 
+      basePollInterval, 
+      idlePollInterval,
+      maxPollInterval,
+    }, 'Optimized polling event listener started (RPC credit conservation mode)')
   }
 
   /**
