@@ -359,8 +359,10 @@ export class EventListenerService {
     logger.info({ event, signature }, 'Vault initialized')
 
     await withTransaction(async (tx) => {
-      await tx.vault.create({
-        data: {
+      // Use upsert to handle both new vaults and re-processing of existing events
+      await tx.vault.upsert({
+        where: { publicKey: event.vaultPda },
+        create: {
           publicKey: event.vaultPda,
           owner: event.owner,
           guardian: event.guardian,
@@ -373,6 +375,13 @@ export class EventListenerService {
           overrideDelay: event.overrideDelay,
           pendingOverride: false,
           isActive: true,
+        },
+        update: {
+          // Update fields that might have changed
+          owner: event.owner,
+          guardian: event.guardian,
+          dailyLimit: event.dailyLimit,
+          overrideDelay: event.overrideDelay,
         },
       })
     })
