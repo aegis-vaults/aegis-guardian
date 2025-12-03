@@ -20,8 +20,10 @@ echo ""
 # Critical variables from user
 railway variables --service "$SERVICE_NAME" --set JWT_SECRET="j0G9hNeUFPTN2vNLpqJZenXKnEM6xaYajuDoEQWqkDE="
 railway variables --service "$SERVICE_NAME" --set WEBHOOK_HMAC_SECRET="++3Mi+OF73GI664VIx23/g0iwpEGjLIKgbd+91Lb6t8="
-railway variables --service "$SERVICE_NAME" --set SOLANA_RPC_URL="https://mainnet.helius-rpc.com/?api-key=e85ab87c-6105-407d-9a02-3b87b56636d1"
-railway variables --service "$SERVICE_NAME" --set SOLANA_WS_URL="wss://mainnet.helius-rpc.com/?api-key=e85ab87c-6105-407d-9a02-3b87b56636d1"
+
+# Solana RPC Configuration (DEVNET with Helius)
+railway variables --service "$SERVICE_NAME" --set SOLANA_RPC_URL="https://devnet.helius-rpc.com/?api-key=d0bb1f98-b8e3-4f52-9108-778ff3d7dcf1"
+railway variables --service "$SERVICE_NAME" --set SOLANA_WS_URL="wss://devnet.helius-rpc.com/?api-key=d0bb1f98-b8e3-4f52-9108-778ff3d7dcf1"
 
 # Application Configuration
 railway variables --service "$SERVICE_NAME" --set NODE_ENV=production
@@ -29,10 +31,10 @@ railway variables --service "$SERVICE_NAME" --set PORT=3000
 railway variables --service "$SERVICE_NAME" --set APP_VERSION=1.0.0
 railway variables --service "$SERVICE_NAME" --set LOG_LEVEL=info
 
-# Solana Configuration (mainnet)
+# Solana Configuration (DEVNET)
 railway variables --service "$SERVICE_NAME" --set PROGRAM_ID=ET9WDoFE2bf4bSmciLL7q7sKdeSYeNkWbNMHbAMBu2ZJ
 railway variables --service "$SERVICE_NAME" --set AEGIS_PROGRAM_ID=ET9WDoFE2bf4bSmciLL7q7sKdeSYeNkWbNMHbAMBu2ZJ
-railway variables --service "$SERVICE_NAME" --set SOLANA_CLUSTER=mainnet
+railway variables --service "$SERVICE_NAME" --set SOLANA_CLUSTER=devnet
 
 # Event Listener Configuration
 railway variables --service "$SERVICE_NAME" --set EVENT_LISTENER_ENABLED=true
