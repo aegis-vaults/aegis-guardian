@@ -154,6 +154,7 @@ export async function PATCH(
 
     // Validate input
     const UpdateVaultSchema = z.object({
+      name: z.string().min(1).max(100).optional(),
       dailyLimit: z.string().regex(/^\d+$/).optional(),
       whitelist: z.array(SolanaPublicKeySchema).max(20).optional(),
       paused: z.boolean().optional(),
@@ -191,6 +192,9 @@ export async function PATCH(
     const updatedVault = await prisma.vault.update({
       where: { id },
       data: {
+        ...(validatedData.name && {
+          name: validatedData.name,
+        }),
         ...(validatedData.dailyLimit && {
           dailyLimit: BigInt(validatedData.dailyLimit),
         }),
