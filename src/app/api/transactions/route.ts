@@ -233,3 +233,163 @@ export async function GET(request: NextRequest) {
     )
   }
 }
+
+/**
+ * POST /api/transactions
+ *
+ * Record a transaction that was executed on-chain.
+ * This is used by the SDK/frontend as a backup to the event listener.
+ *
+ * Body:
+ * - signature: Transaction signature
+ * - vaultPublicKey: Vault public key
+ * - from: Sender address
+ * - to: Recipient address
+ * - amount: Amount in lamports (string)
+ * - status: EXECUTED, BLOCKED, PENDING, FAILED
+ * - blockReason: (optional) Reason if blocked
+ */
+export async function POST(request: NextRequest) {
+  try {
+    const authContext = await getAuthContext(request)
+    if (!authContext) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'AUTHENTICATION_REQUIRED',
+            message: 'Authentication required to record transactions',
+          },
+        } as ApiResponse<never>,
+        { status: 401 }
+      )
+    }
+
+    const body = await request.json()
+    const { signature, vaultPublicKey, from, to, amount, status, blockReason } = body
+
+    if (!signature || !vaultPublicKey || !from || !to || !amount || !status) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Missing required fields: signature, vaultPublicKey, from, to, amount, status',
+          },
+        } as ApiResponse<never>,
+        { status: 400 }
+      )
+    }
+
+    // Find vault by public key
+    const vault = await prisma.vault.findUnique({
+      where: { publicKey: vaultPublicKey },
+    })
+
+    if (!vault) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'VAULT_NOT_FOUND',
+            message: 'Vault not found',
+          },
+        } as ApiResponse<never>,
+        { status: 404 }
+      )
+    }
+
+    // Check if user owns the vault
+    if (vault.userId !== authContext.user.id) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'ACCESS_DENIED',
+            message: 'You do not have access to this vault',
+          },
+        } as ApiResponse<never>,
+        { status: 403 }
+      )
+    }
+
+    // Check if transaction already exists
+    const existingTx = await prisma.transaction.findFirst({
+      where: { signature },
+    })
+
+    if (existingTx) {
+      return NextResponse.json({
+        success: true,
+        data: {
+          ...existingTx,
+          amount: existingTx.amount.toString(),
+          slot: existingTx.slot?.toString() || null,
+          blockTime: existingTx.blockTime?.toString() || null,
+        },
+        message: 'Transaction already exists',
+      })
+    }
+
+    // Create transaction record
+    const transaction = await prisma.transaction.create({
+      data: {
+        signature,
+        vaultId: vault.id,
+        from,
+        to,
+        amount: BigInt(amount),
+        status: status as 'PENDING' | 'EXECUTED' | 'BLOCKED' | 'FAILED',
+        blockReason,
+        executedAt: status === 'EXECUTED' ? new Date() : null,
+        blockedAt: status === 'BLOCKED' ? new Date() : null,
+      },
+    })
+
+    // Update vault daily spent if executed
+    if (status === 'EXECUTED') {
+      await prisma.vault.update({
+        where: { id: vault.id },
+        data: {
+          dailySpent: {
+            increment: BigInt(amount),
+          },
+        },
+      })
+    }
+
+    // Invalidate caches
+    await cache.delete(`vault:${vaultPublicKey}`)
+    await cache.deletePattern(`transactions:*`)
+
+    logger.info({
+      signature,
+      vaultId: vault.id,
+      status,
+      amount,
+    }, 'Transaction recorded via API')
+
+    return NextResponse.json({
+      success: true,
+      data: {
+        ...transaction,
+        amount: transaction.amount.toString(),
+        slot: transaction.slot?.toString() || null,
+        blockTime: transaction.blockTime?.toString() || null,
+      },
+    }, { status: 201 })
+  } catch (error: any) {
+    logger.error({ error: error.message }, 'Failed to record transaction')
+
+    return NextResponse.json(
+      {
+        success: false,
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Failed to record transaction',
+        },
+      } as ApiResponse<never>,
+      { status: 500 }
+    )
+  }
+}
