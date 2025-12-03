@@ -17,7 +17,38 @@ export class BlinkGeneratorService {
   private baseUrl: string
 
   constructor() {
-    this.baseUrl = process.env.BASE_URL || 'http://localhost:3000'
+    // Ensure BASE_URL is properly set and doesn't contain error messages
+    const envBaseUrl = process.env.BASE_URL || ''
+    
+    // Validate the BASE_URL:
+    // - Must start with http:// or https://
+    // - Must not contain spaces (indicates an error message)
+    // - Must not contain '+' (URL-encoded spaces)
+    // - Must not contain 'Domains' (common Railway error message)
+    const isValidUrl = envBaseUrl && 
+      envBaseUrl.startsWith('http') && 
+      !envBaseUrl.includes(' ') && 
+      !envBaseUrl.includes('+') && 
+      !envBaseUrl.toLowerCase().includes('domains')
+    
+    if (isValidUrl) {
+      this.baseUrl = envBaseUrl.replace(/\/$/, '') // Remove trailing slash
+      logger.info({ baseUrl: this.baseUrl }, 'Using BASE_URL from environment')
+    } else {
+      logger.warn({ 
+        envBaseUrl, 
+        reason: 'Invalid or missing BASE_URL, using default' 
+      }, 'BASE_URL is not properly configured')
+      this.baseUrl = 'https://aegis-guardian-production.up.railway.app'
+    }
+    logger.info({ baseUrl: this.baseUrl }, 'BlinkGeneratorService initialized')
+  }
+
+  /**
+   * Get the properly formatted base URL
+   */
+  getBaseUrl(): string {
+    return this.baseUrl
   }
 
   /**
@@ -98,14 +129,18 @@ export class BlinkGeneratorService {
   /**
    * Generate a Blink for a blocked transaction notification
    *
+   * This generates a Solana Blink URL that the vault owner can use to approve
+   * an override for the blocked transaction. The Blink renders in Solana wallets
+   * and social media as an interactive card.
+   *
    * @param vaultId - Vault database ID
    * @param transactionId - Transaction database ID
-   * @returns Blink metadata and database record
+   * @returns Blink metadata and action URL (both raw API URL and dial.to shareable URL)
    */
   async generateBlockedTransactionBlink(
     vaultId: string,
     transactionId: string
-  ): Promise<{ blink: BlinkMetadata; actionUrl: string }> {
+  ): Promise<{ blink: BlinkMetadata; actionUrl: string; blinkUrl: string }> {
     try {
       const vault = await prisma.vault.findUnique({
         where: { id: vaultId },
@@ -119,19 +154,43 @@ export class BlinkGeneratorService {
         throw new Error('Vault or transaction not found')
       }
 
-      const actionUrl = `${this.baseUrl}/api/actions/transaction/${transactionId}`
+      // Map block reason to the expected format
+      const reasonMap: Record<string, string> = {
+        'DailyLimitExceeded': 'exceeded_daily_limit',
+        'NotWhitelisted': 'not_whitelisted',
+        'VaultPaused': 'vault_paused',
+      }
+      const reason = reasonMap[transaction.blockReason || ''] || 'exceeded_daily_limit'
 
+      // Build the action URL with proper query parameters
+      // This uses the /api/blinks/override endpoint which handles Solana Actions protocol
+      const queryParams = new URLSearchParams({
+        vault: vault.publicKey,
+        destination: transaction.to,
+        amount: transaction.amount.toString(),
+        reason,
+      })
+      
+      const actionUrl = `${this.baseUrl}/api/blinks/override?${queryParams.toString()}`
+      
+      // Generate the dial.to shareable URL for Blinks
+      // This is what gets shared and renders the interactive card
+      const encodedActionUrl = encodeURIComponent(actionUrl)
+      const blinkUrl = `https://dial.to/?action=solana-action:${encodedActionUrl}`
+
+      const amountSol = this.formatSol(transaction.amount)
+      
       const metadata: BlinkMetadata = {
-        title: 'Transaction Blocked',
-        icon: `${this.baseUrl}/icons/aegis-blocked.png`,
-        description: `A transaction was blocked by Aegis Guardian. Amount: ${this.formatSol(transaction.amount)} SOL. Reason: ${transaction.blockReason || 'Policy violation'}`,
-        label: 'View Details',
+        title: 'Aegis Override Request',
+        icon: `${this.baseUrl}/aegis-icon.png`,
+        description: `A transaction was blocked and requires your approval. Amount: ${amountSol} SOL to ${this.truncateAddress(transaction.to)}. Reason: ${transaction.blockReason || 'Policy violation'}`,
+        label: 'Approve Override',
         links: {
           actions: [
             {
               type: 'transaction',
-              label: 'Request Override',
-              href: `${actionUrl}/request-override`,
+              label: `Approve ${amountSol} SOL Override`,
+              href: actionUrl,
             },
           ],
         },
@@ -149,9 +208,18 @@ export class BlinkGeneratorService {
         },
       })
 
-      logger.info({ vaultId, transactionId, actionUrl }, 'Blocked transaction Blink generated')
+      logger.info({ 
+        vaultId, 
+        transactionId, 
+        actionUrl,
+        blinkUrl,
+        vaultPublicKey: vault.publicKey,
+        amount: transaction.amount.toString(),
+        destination: transaction.to,
+        reason,
+      }, 'Blocked transaction Blink generated')
 
-      return { blink: metadata, actionUrl }
+      return { blink: metadata, actionUrl, blinkUrl }
     } catch (error) {
       logger.error({ error, vaultId, transactionId }, 'Failed to generate blocked tx Blink')
       throw error

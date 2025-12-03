@@ -18,6 +18,7 @@ interface NotificationPayload {
     blinkUrl: string
     expiresAt: string
     vaultName: string
+    vaultPublicKey: string
 }
 
 /**
@@ -44,16 +45,39 @@ export class NotificationService {
             logger.error({ error, overrideId: override.id }, 'Failed to fetch transaction details for notification')
         }
 
+        // Format the block reason for display
+        const blockReason = transactionDetails?.blockReason || 'Policy Violation'
+        const formattedReason = blockReason
+            .replace(/([A-Z])/g, ' $1') // Add space before capital letters
+            .replace(/^./, (str) => str.toUpperCase()) // Capitalize first letter
+            .trim()
+
         const payload: NotificationPayload = {
             amount: transactionDetails
                 ? (Number(transactionDetails.amount) / 1e9).toFixed(4)
                 : (Number(override.requestedAmount || 0) / 1e9).toFixed(4),
             destination: transactionDetails?.to || override.destination || 'Unknown',
-            reason: transactionDetails?.blockReason || 'Policy Violation',
+            reason: formattedReason,
             blinkUrl: override.blinkUrl || '',
-            expiresAt: new Date(Number(override.expiresAt) * 1000).toLocaleString(),
-            vaultName: vault.name || vault.publicKey.slice(0, 8),
+            expiresAt: Number(override.expiresAt) > 0 
+                ? new Date(Number(override.expiresAt) * 1000).toLocaleString()
+                : 'No expiration set',
+            vaultName: vault.name || `Vault ${vault.publicKey.slice(0, 8)}...`,
+            vaultPublicKey: vault.publicKey,
         }
+
+        // Log the notification payload for debugging
+        logger.info({ 
+            userId: user.id, 
+            vaultId: vault.id,
+            payload,
+            channels: {
+                telegram: !!user.telegramChatId,
+                discord: !!user.discordWebhook,
+                email: !!user.email,
+                webhook: !!user.webhookUrl,
+            }
+        }, 'Sending override notification')
 
         const promises: Promise<void>[] = []
 
@@ -95,17 +119,24 @@ export class NotificationService {
                 return
             }
 
+            // Truncate destination for display
+            const shortDest = `${payload.destination.slice(0, 6)}...${payload.destination.slice(-4)}`
+
             const message = `
 🛡️ *Aegis Override Request*
 
-*Vault:* ${payload.vaultName}
-*Amount:* ${payload.amount} SOL
-*To:* \`${payload.destination}\`
-*Reason:* ${payload.reason}
-*Expires:* ${payload.expiresAt}
+━━━━━━━━━━━━━━━━━━━━
+📦 *Vault:* ${payload.vaultName}
+💰 *Amount:* ${payload.amount} SOL
+📍 *To:* \`${shortDest}\`
+⚠️ *Reason:* ${payload.reason}
+⏰ *Expires:* ${payload.expiresAt}
+━━━━━━━━━━━━━━━━━━━━
 
-[Approve or Reject](${payload.blinkUrl})
+Click below to approve this transaction in your Solana wallet.
       `.trim()
+
+            logger.info({ chatId, vaultName: payload.vaultName, blinkUrl: payload.blinkUrl }, 'Sending Telegram notification')
 
             const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
                 method: 'POST',
@@ -116,17 +147,20 @@ export class NotificationService {
                     parse_mode: 'Markdown',
                     reply_markup: {
                         inline_keyboard: [[
-                            { text: 'Open Blink', url: payload.blinkUrl }
+                            { text: '✅ Approve Override', url: payload.blinkUrl }
                         ]]
                     }
                 })
             })
 
             if (!response.ok) {
-                throw new Error(`Telegram API error: ${response.statusText}`)
+                const errorText = await response.text()
+                throw new Error(`Telegram API error: ${response.statusText} - ${errorText}`)
             }
+            
+            logger.info({ chatId }, 'Telegram notification sent successfully')
         } catch (error) {
-            logger.error({ error, chatId }, 'Telegram notification failed')
+            logger.error({ error, chatId, blinkUrl: payload.blinkUrl }, 'Telegram notification failed')
             throw error
         }
     }
@@ -164,33 +198,77 @@ export class NotificationService {
 
     private async sendEmail(to: string, payload: NotificationPayload): Promise<void> {
         try {
+            // Log the email being sent for debugging
+            logger.info({ to, vaultName: payload.vaultName, blinkUrl: payload.blinkUrl }, 'Sending email notification')
+            
             const msg = {
                 to,
                 from: process.env.SENDGRID_FROM_EMAIL || 'notifications@aegis.finance',
-                subject: `Action Required: Override Request for ${payload.vaultName}`,
+                subject: `🛡️ Action Required: Override Request for ${payload.vaultName}`,
                 html: `
-          <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-            <h2>🛡️ Aegis Override Request</h2>
-            <p>A transaction was blocked and requires your approval.</p>
-            
-            <div style="background: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
-              <p><strong>Vault:</strong> ${payload.vaultName}</p>
-              <p><strong>Amount:</strong> ${payload.amount} SOL</p>
-              <p><strong>Destination:</strong> ${payload.destination}</p>
-              <p><strong>Reason:</strong> ${payload.reason}</p>
-              <p><strong>Expires:</strong> ${payload.expiresAt}</p>
-            </div>
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background: #f9fafb;">
+  <div style="background: white; border-radius: 12px; padding: 32px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+    <div style="text-align: center; margin-bottom: 24px;">
+      <h1 style="margin: 0; font-size: 24px; color: #111827;">🛡️ Aegis Override Request</h1>
+      <p style="margin: 8px 0 0 0; color: #6b7280;">A transaction was blocked and requires your approval</p>
+    </div>
+    
+    <div style="background: #f3f4f6; border-radius: 8px; padding: 20px; margin: 24px 0;">
+      <table style="width: 100%; border-collapse: collapse;">
+        <tr>
+          <td style="padding: 8px 0; color: #6b7280; font-size: 14px;">Vault</td>
+          <td style="padding: 8px 0; text-align: right; font-weight: 600; color: #111827;">${payload.vaultName}</td>
+        </tr>
+        <tr>
+          <td style="padding: 8px 0; color: #6b7280; font-size: 14px;">Amount</td>
+          <td style="padding: 8px 0; text-align: right; font-weight: 600; color: #111827;">${payload.amount} SOL</td>
+        </tr>
+        <tr>
+          <td style="padding: 8px 0; color: #6b7280; font-size: 14px;">Destination</td>
+          <td style="padding: 8px 0; text-align: right; font-family: monospace; font-size: 12px; color: #111827;">${payload.destination.slice(0, 8)}...${payload.destination.slice(-8)}</td>
+        </tr>
+        <tr>
+          <td style="padding: 8px 0; color: #6b7280; font-size: 14px;">Reason</td>
+          <td style="padding: 8px 0; text-align: right; color: #dc2626;">${payload.reason}</td>
+        </tr>
+        <tr>
+          <td style="padding: 8px 0; color: #6b7280; font-size: 14px;">Expires</td>
+          <td style="padding: 8px 0; text-align: right; color: #6b7280;">${payload.expiresAt}</td>
+        </tr>
+      </table>
+    </div>
 
-            <a href="${payload.blinkUrl}" style="background: #000; color: #fff; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">
-              Review Request
-            </a>
-          </div>
+    <div style="text-align: center; margin-top: 24px;">
+      <a href="${payload.blinkUrl}" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px;">
+        Approve Override →
+      </a>
+      <p style="margin: 16px 0 0 0; font-size: 12px; color: #9ca3af;">
+        Click the button above to open the Solana Blink and approve this transaction
+      </p>
+    </div>
+    
+    <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 24px 0;">
+    
+    <div style="font-size: 12px; color: #9ca3af; text-align: center;">
+      <p style="margin: 0;">This is an automated notification from Aegis Vaults.</p>
+      <p style="margin: 4px 0 0 0;">Vault: <code style="background: #f3f4f6; padding: 2px 6px; border-radius: 4px;">${payload.vaultPublicKey}</code></p>
+    </div>
+  </div>
+</body>
+</html>
         `
             }
 
             await sgMail.send(msg)
+            logger.info({ to }, 'Email notification sent successfully')
         } catch (error) {
-            logger.error({ error, to }, 'Email notification failed')
+            logger.error({ error, to, blinkUrl: payload.blinkUrl }, 'Email notification failed')
             throw error
         }
     }

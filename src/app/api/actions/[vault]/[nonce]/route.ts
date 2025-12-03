@@ -89,7 +89,14 @@ export const GET = async (
             return NextResponse.json({ error: 'Override is not pending' }, { status: 400 })
         }
 
-        const baseUrl = process.env.BASE_URL || 'http://localhost:3000'
+        // Validate BASE_URL - use production default if invalid
+        const envBaseUrl = process.env.BASE_URL || ''
+        const isValidUrl = envBaseUrl && 
+            envBaseUrl.startsWith('http') && 
+            !envBaseUrl.includes(' ') && 
+            !envBaseUrl.includes('+') && 
+            !envBaseUrl.toLowerCase().includes('domains')
+        const baseUrl = isValidUrl ? envBaseUrl.replace(/\/$/, '') : 'https://aegis-guardian-production.up.railway.app'
         const actionUrl = `${baseUrl}/api/actions/${vaultAddress}/${nonce}`
 
         // Return metadata
