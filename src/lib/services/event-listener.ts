@@ -324,6 +324,7 @@ export class EventListenerService {
 
       switch (`0x${discriminator}`) {
         case EventDiscriminator.VaultInitialized:
+        case EventDiscriminator.VaultCreated:
           await this.handleVaultInitialized(eventData, signature)
           break
         case EventDiscriminator.TransactionExecuted:
@@ -707,24 +708,43 @@ export class EventListenerService {
 
   // Event parsing methods using Anchor's event coder
   private parseVaultInitializedEvent(data: Buffer): VaultInitializedEvent {
-    // Actual event data structure from Anchor IDL (VaultInitialized event):
+    // Supports two event formats from the IDL:
+    //
+    // VaultCreated event (73 bytes):
+    // - vault: PublicKey (32 bytes)
+    // - authority: PublicKey (32 bytes)
+    // - tier: u8 (1 byte)
+    // - daily_limit: u64 (8 bytes)
+    //
+    // VaultInitialized event (80 bytes):
     // - vault: PublicKey (32 bytes)
     // - authority: PublicKey (32 bytes)
     // - daily_limit: u64 (8 bytes)
     // - timestamp: i64 (8 bytes)
-    // Total: 80 bytes
     //
     // Note: The protocol does not emit guardian or overrideDelay fields.
     // We use the authority as both owner and guardian, and provide a default overrideDelay.
 
-    if (data.length < 80) {
-      throw new Error(`Invalid VaultInitialized event data length: ${data.length}`)
-    }
-
     const vault = new PublicKey(data.slice(0, 32)).toBase58()
     const authority = new PublicKey(data.slice(32, 64)).toBase58()
-    const dailyLimit = data.readBigUInt64LE(64)
-    const timestamp = data.readBigInt64LE(72)
+
+    let dailyLimit: bigint
+    let timestamp: bigint
+
+    if (data.length >= 80) {
+      // VaultInitialized format (80 bytes)
+      dailyLimit = data.readBigUInt64LE(64)
+      timestamp = data.readBigInt64LE(72)
+    } else if (data.length >= 73) {
+      // VaultCreated format (73 bytes) - has tier byte before daily_limit
+      // Skip tier byte at offset 64
+      dailyLimit = data.readBigUInt64LE(65)
+      timestamp = BigInt(Math.floor(Date.now() / 1000)) // Use current time as timestamp
+    } else {
+      throw new Error(`Invalid vault event data length: ${data.length}`)
+    }
+
+    logger.debug({ vault, authority, dailyLimit: dailyLimit.toString(), dataLength: data.length }, 'Parsed vault event')
 
     return {
       vaultPda: vault,

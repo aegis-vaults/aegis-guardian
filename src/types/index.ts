@@ -19,14 +19,24 @@ export const TransactionSignatureSchema = z
 
 /**
  * Solana event discriminators (first 8 bytes of event data)
+ * These are the Anchor event discriminators from the IDL
+ * Converted from byte arrays to hex strings for matching
  */
 export enum EventDiscriminator {
-  VaultInitialized = '0x01',
-  TransactionExecuted = '0x02',
-  TransactionBlocked = '0x03',
-  OverrideRequested = '0x04',
-  OverrideApproved = '0x05',
-  PolicyUpdated = '0x06',
+  // VaultInitialized: [180, 43, 207, 2, 18, 71, 3, 75]
+  VaultInitialized = '0xb42bcf021247034b',
+  // VaultCreated: [117, 25, 120, 254, 75, 236, 78, 115]
+  VaultCreated = '0x751978fe4bec4e73',
+  // TransactionExecuted: [211, 227, 168, 14, 32, 111, 189, 210]
+  TransactionExecuted = '0xd3e3a80e206fbdd2',
+  // TransactionBlocked: [3, 64, 83, 53, 179, 19, 131, 87]
+  TransactionBlocked = '0x03405335b3138357',
+  // OverrideCreated: [109, 39, 191, 207, 28, 235, 116, 67]
+  OverrideRequested = '0x6d27bfcf1ceb7443',
+  // OverrideApproved: [173, 131, 53, 85, 191, 81, 150, 221]
+  OverrideApproved = '0xad833555bf5196dd',
+  // PolicyUpdated: [225, 112, 112, 67, 95, 236, 245, 161]
+  PolicyUpdated = '0xe17070435fecf5a1',
 }
 
 /**
