@@ -88,6 +88,7 @@ export async function GET(request: NextRequest) {
           overrideDelay: true,
           pendingOverride: true,
           isActive: true,
+          vaultNonce: true,
           createdAt: true,
           updatedAt: true,
           _count: {
