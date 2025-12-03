@@ -37,11 +37,11 @@ const TIER_PRICE_IDS: Record<VaultTier, string> = {
     [VaultTier.ENTERPRISE]: process.env.STRIPE_ENTERPRISE_PRICE_ID || '',
 }
 
-// Conversion constants
-const LAMPORTS_PER_SOL = 1_000_000_000n
-
 /**
  * Get the tier limits configuration for a specific tier.
+ * 
+ * Note: All tiers now have unlimited vaults, daily limits, and team members.
+ * The tier system is preserved for future feature differentiation.
  *
  * @param tier - The vault tier (PERSONAL, TEAM, or ENTERPRISE)
  * @returns TierLimits object with max vaults, daily limit, team members, and features
@@ -49,8 +49,8 @@ const LAMPORTS_PER_SOL = 1_000_000_000n
  * @example
  * ```typescript
  * const limits = getTierLimits(VaultTier.PERSONAL)
- * console.log(limits.maxVaults) // 1
- * console.log(limits.maxDailyLimit) // 100000000000n (100 SOL / $100)
+ * console.log(limits.maxVaults) // -1 (unlimited)
+ * console.log(limits.maxDailyLimit) // -1n (unlimited, enforced on-chain per vault)
  * ```
  */
 export function getTierLimits(tier: VaultTier | PrismaVaultTier): TierLimits {
