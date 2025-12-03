@@ -103,9 +103,17 @@ export class BlinkGeneratorService {
         },
       }
 
-      // Store Blink in database
-      await prisma.blink.create({
-        data: {
+      // Store Blink in database (upsert to handle duplicates)
+      await prisma.blink.upsert({
+        where: { actionUrl },
+        update: {
+          title: metadata.title,
+          description: metadata.description,
+          iconUrl: metadata.icon,
+          label: metadata.label,
+          isActive: true,
+        },
+        create: {
           actionUrl,
           title: metadata.title,
           description: metadata.description,
@@ -196,8 +204,18 @@ export class BlinkGeneratorService {
         },
       }
 
-      await prisma.blink.create({
-        data: {
+      // Use upsert to handle duplicate URLs (from retries or duplicate requests)
+      await prisma.blink.upsert({
+        where: { actionUrl },
+        update: {
+          title: metadata.title,
+          description: metadata.description,
+          iconUrl: metadata.icon,
+          label: metadata.label,
+          isActive: true,
+          usedCount: { increment: 1 },
+        },
+        create: {
           actionUrl,
           title: metadata.title,
           description: metadata.description,
@@ -265,8 +283,16 @@ export class BlinkGeneratorService {
         },
       }
 
-      await prisma.blink.create({
-        data: {
+      await prisma.blink.upsert({
+        where: { actionUrl },
+        update: {
+          title: metadata.title,
+          description: metadata.description,
+          iconUrl: metadata.icon,
+          label: metadata.label,
+          isActive: true,
+        },
+        create: {
           actionUrl,
           title: metadata.title,
           description: metadata.description,
