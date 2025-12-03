@@ -5,6 +5,11 @@
  * When an agent-signed transaction is blocked by policy, the agent can
  * generate a Blink URL that the vault owner can use to approve the override.
  * 
+ * The transaction includes ALL THREE steps:
+ * 1. create_override - Creates the pending override
+ * 2. approve_override - Approves it
+ * 3. execute_approved_override - Executes the transfer
+ * 
  * Solana Actions Protocol:
  * - GET: Returns action metadata (title, icon, description)
  * - POST: Returns the transaction to sign
@@ -18,6 +23,7 @@ import {
   TransactionInstruction,
   SystemProgram,
   LAMPORTS_PER_SOL,
+  ComputeBudgetProgram,
 } from '@solana/web3.js'
 import { BN } from '@coral-xyz/anchor'
 import logger from '@/lib/logger'
@@ -43,6 +49,30 @@ const ACTIONS_CORS_HEADERS = {
   'Access-Control-Expose-Headers': 'X-Action-Version, X-Blockchain-Ids',
   'X-Action-Version': '2.1.3',
   'X-Blockchain-Ids': 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1',
+}
+
+// Helper to compute instruction discriminator
+async function getDiscriminator(name: string): Promise<Buffer> {
+  const crypto = await import('crypto')
+  const hash = crypto.createHash('sha256')
+  hash.update(`global:${name}`)
+  return hash.digest().slice(0, 8)
+}
+
+// Derive vault authority PDA
+function deriveVaultAuthorityPda(vault: PublicKey): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from('vault_authority'), vault.toBuffer()],
+    AEGIS_PROGRAM_ID
+  )
+}
+
+// Derive fee treasury PDA
+function deriveFeeTreasuryPda(): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from('treasury')],
+    AEGIS_PROGRAM_ID
+  )
 }
 
 /**
@@ -105,6 +135,11 @@ export async function GET(request: NextRequest) {
 
 /**
  * POST - Build and return the transaction
+ * 
+ * Creates a transaction with 3 instructions:
+ * 1. create_override - Creates the pending override
+ * 2. approve_override - Approves it
+ * 3. execute_approved_override - Executes the actual transfer
  */
 export async function POST(request: NextRequest) {
   try {
@@ -162,11 +197,15 @@ export async function POST(request: NextRequest) {
     }
 
     // Parse override_nonce and vault_nonce
-    const overrideNonceOffset = 8 + 32 + 32 + 8 + 8 + 8 + 640 + 1 + 1 + 2 + 50 + 1 + 1
+    // Offsets based on VaultConfig struct:
+    // 8 (discriminator) + 32 (authority) + 32 (agent_signer) + 8 (daily_limit) + 8 (daily_spent) + 8 (last_reset) 
+    // + 640 (whitelist: 20*32) + 1 (whitelist_count) + 1 (whitelist_enabled) + 2 (fee_basis_points) 
+    // + 50 (name) + 1 (name_len) + 1 (paused) = 792
+    const overrideNonceOffset = 792
     const overrideNonce = data.readBigUInt64LE(overrideNonceOffset)
     const vaultNonce = data.readBigUInt64LE(overrideNonceOffset + 8)
 
-    // Derive pending override PDA
+    // Derive PDAs
     const [pendingOverridePda] = PublicKey.findProgramAddressSync(
       [
         Buffer.from('override'),
@@ -175,21 +214,21 @@ export async function POST(request: NextRequest) {
       ],
       AEGIS_PROGRAM_ID
     )
+    const [vaultAuthorityPda] = deriveVaultAuthorityPda(vaultPubkey)
+    const [feeTreasury] = deriveFeeTreasuryPda()
 
-    // Build create_override instruction
-    // Discriminator: sha256("global:create_override")[:8]
-    const crypto = await import('crypto')
-    const hash = crypto.createHash('sha256')
-    hash.update('global:create_override')
-    const discriminator = hash.digest().slice(0, 8)
+    // Get discriminators
+    const createOverrideDisc = await getDiscriminator('create_override')
+    const approveOverrideDisc = await getDiscriminator('approve_override')
+    const executeApprovedOverrideDisc = await getDiscriminator('execute_approved_override')
 
-    // Instruction data
-    const instructionData = Buffer.alloc(8 + 8 + 32 + 8 + 1)
-    discriminator.copy(instructionData, 0)
-    instructionData.writeBigUInt64LE(vaultNonce, 8)
-    destinationPubkey.toBuffer().copy(instructionData, 16)
-    instructionData.writeBigUInt64LE(amountLamports, 48)
-    instructionData.writeUInt8(blockReason, 56)
+    // 1. Build create_override instruction
+    const createOverrideData = Buffer.alloc(8 + 8 + 32 + 8 + 1)
+    createOverrideDisc.copy(createOverrideData, 0)
+    createOverrideData.writeBigUInt64LE(vaultNonce, 8)
+    destinationPubkey.toBuffer().copy(createOverrideData, 16)
+    createOverrideData.writeBigUInt64LE(amountLamports, 48)
+    createOverrideData.writeUInt8(blockReason, 56)
 
     const createOverrideIx = new TransactionInstruction({
       keys: [
@@ -199,12 +238,54 @@ export async function POST(request: NextRequest) {
         { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
       ],
       programId: AEGIS_PROGRAM_ID,
-      data: instructionData,
+      data: createOverrideData,
     })
 
-    // Build transaction
+    // 2. Build approve_override instruction
+    const approveOverrideData = Buffer.alloc(8 + 8)
+    approveOverrideDisc.copy(approveOverrideData, 0)
+    approveOverrideData.writeBigUInt64LE(vaultNonce, 8)
+
+    const approveOverrideIx = new TransactionInstruction({
+      keys: [
+        { pubkey: vaultPubkey, isSigner: false, isWritable: true },
+        { pubkey: signerPubkey, isSigner: true, isWritable: false },
+        { pubkey: pendingOverridePda, isSigner: false, isWritable: true },
+      ],
+      programId: AEGIS_PROGRAM_ID,
+      data: approveOverrideData,
+    })
+
+    // 3. Build execute_approved_override instruction
+    const executeOverrideData = Buffer.alloc(8 + 8)
+    executeApprovedOverrideDisc.copy(executeOverrideData, 0)
+    executeOverrideData.writeBigUInt64LE(vaultNonce, 8)
+
+    const executeOverrideIx = new TransactionInstruction({
+      keys: [
+        { pubkey: vaultPubkey, isSigner: false, isWritable: true },
+        { pubkey: signerPubkey, isSigner: true, isWritable: false },
+        { pubkey: pendingOverridePda, isSigner: false, isWritable: true },
+        { pubkey: vaultAuthorityPda, isSigner: false, isWritable: true },
+        { pubkey: destinationPubkey, isSigner: false, isWritable: true },
+        { pubkey: feeTreasury, isSigner: false, isWritable: true },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      ],
+      programId: AEGIS_PROGRAM_ID,
+      data: executeOverrideData,
+    })
+
+    // Build transaction with compute budget
     const transaction = new Transaction()
+    
+    // Add compute budget instructions for complex transaction
+    transaction.add(ComputeBudgetProgram.setComputeUnitLimit({ units: 400000 }))
+    transaction.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 }))
+    
+    // Add all 3 override instructions
     transaction.add(createOverrideIx)
+    transaction.add(approveOverrideIx)
+    transaction.add(executeOverrideIx)
 
     // Get recent blockhash
     const { blockhash } = await connection.getLatestBlockhash('confirmed')
@@ -224,23 +305,22 @@ export async function POST(request: NextRequest) {
       reason,
       signer: account,
       pendingOverride: pendingOverridePda.toBase58(),
-    }, 'Created override transaction')
+    }, 'Created complete override transaction (create + approve + execute)')
 
     // Return Solana Actions response
     return NextResponse.json(
       {
         type: 'transaction',
         transaction: serializedTx.toString('base64'),
-        message: `Approve override for ${(Number(amountLamports) / LAMPORTS_PER_SOL).toFixed(4)} SOL to ${destination.slice(0, 8)}...`,
+        message: `Approve and execute override: ${(Number(amountLamports) / LAMPORTS_PER_SOL).toFixed(4)} SOL to ${destination.slice(0, 8)}...`,
       },
       { headers: ACTIONS_CORS_HEADERS }
     )
   } catch (error: any) {
-    logger.error({ error: error.message }, 'Error in POST /api/blinks/override')
+    logger.error({ error: error.message, stack: error.stack }, 'Error in POST /api/blinks/override')
     return NextResponse.json(
       { error: error.message || 'Internal server error' },
       { status: 500, headers: ACTIONS_CORS_HEADERS }
     )
   }
 }
-
