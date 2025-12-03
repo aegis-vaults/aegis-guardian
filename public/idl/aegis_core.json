@@ -617,8 +617,10 @@
         "Initialize a new vault configuration",
         "",
         "Creates a PDA-based vault config with spending limits and whitelist controls.",
+        "Users can create unlimited vaults by using different nonce values.",
         "",
         "# Arguments",
+        "* `nonce` - Unique identifier for this vault (allows multiple vaults per user)",
         "* `agent_signer` - The AI agent public key authorized to propose transactions",
         "* `daily_limit` - Maximum amount (in lamports) that can be spent per day",
         "* `name` - Human-readable name for the vault (max 50 chars)"
@@ -652,6 +654,10 @@
               {
                 "kind": "account",
                 "path": "authority"
+              },
+              {
+                "kind": "arg",
+                "path": "nonce"
               }
             ]
           }
@@ -703,6 +709,10 @@
         }
       ],
       "args": [
+        {
+          "name": "nonce",
+          "type": "u64"
+        },
         {
           "name": "agent_signer",
           "type": "pubkey"
@@ -1897,7 +1907,7 @@
       "docs": [
         "Main vault configuration account",
         "",
-        "PDA seeds: [b\"vault\", authority.key().as_ref()]",
+        "PDA seeds: [b\"vault\", authority.key().as_ref(), &nonce.to_le_bytes()]",
         "",
         "This account stores all configuration and state for a user's vault,",
         "including spending limits, whitelisted addresses, and policy settings."
@@ -2007,6 +2017,13 @@
             "name": "override_nonce",
             "docs": [
               "Nonce for generating unique override PDAs"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "vault_nonce",
+            "docs": [
+              "Vault nonce (unique per user, allows multiple vaults)"
             ],
             "type": "u64"
           },

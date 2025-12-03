@@ -94,7 +94,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Parse the vault account data
-    // VaultConfig structure from IDL:
+    // VaultConfig structure from IDL (with nonce for unlimited vaults):
     // - discriminator: 8 bytes
     // - authority: 32 bytes (pubkey)
     // - agent_signer: 32 bytes (pubkey)
@@ -109,6 +109,7 @@ export async function POST(request: NextRequest) {
     // - name_len: 1 byte (u8)
     // - paused: 1 byte (bool)
     // - override_nonce: 8 bytes (u64)
+    // - vault_nonce: 8 bytes (u64) - unique per user, allows unlimited vaults
     // - bump: 1 byte (u8)
 
     const data = accountInfo.data

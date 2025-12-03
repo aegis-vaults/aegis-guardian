@@ -54,28 +54,30 @@ const LAMPORTS_PER_SOL = 1_000_000_000n
  * ```
  */
 export function getTierLimits(tier: VaultTier | PrismaVaultTier): TierLimits {
+    // All tiers now have unlimited vaults (subscription tiers deprecated)
+    // Features remain differentiated for future use
     switch (tier) {
         case 'PERSONAL':
             return {
-                maxVaults: 1,
-                maxDailyLimit: BigInt(100) * LAMPORTS_PER_SOL, // $100 equivalent in lamports
-                maxTeamMembers: 5,
+                maxVaults: -1, // Unlimited vaults for all users
+                maxDailyLimit: -1n, // Unlimited (enforced on-chain per vault)
+                maxTeamMembers: -1, // Unlimited team members
                 features: {
-                    webhooks: false,
+                    webhooks: true,
                     customDomain: false,
                     prioritySupport: false,
-                    advancedAnalytics: false,
+                    advancedAnalytics: true,
                 },
             }
 
         case 'TEAM':
             return {
-                maxVaults: 10,
-                maxDailyLimit: BigInt(1000) * LAMPORTS_PER_SOL, // $1000 equivalent in lamports
-                maxTeamMembers: 20,
+                maxVaults: -1, // Unlimited
+                maxDailyLimit: -1n, // Unlimited
+                maxTeamMembers: -1, // Unlimited
                 features: {
                     webhooks: true,
-                    customDomain: false,
+                    customDomain: true,
                     prioritySupport: false,
                     advancedAnalytics: true,
                 },
@@ -95,7 +97,7 @@ export function getTierLimits(tier: VaultTier | PrismaVaultTier): TierLimits {
             }
 
         default:
-            // Default to PERSONAL tier limits
+            // Default to PERSONAL tier limits (now unlimited)
             logger.warn({ tier }, 'Unknown tier, defaulting to PERSONAL limits')
             return getTierLimits('PERSONAL')
     }
