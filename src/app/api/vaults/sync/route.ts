@@ -203,6 +203,7 @@ export async function POST(request: NextRequest) {
         publicKey: vaultPublicKey,
         owner: authority,
         guardian: authority, // Use authority as guardian
+        agentSigner,
         dailyLimit,
         dailySpent: spentToday,
         lastResetTime: lastReset,
@@ -216,6 +217,7 @@ export async function POST(request: NextRequest) {
       },
       update: {
         owner: authority,
+        agentSigner,
         dailyLimit,
         dailySpent: spentToday,
         lastResetTime: lastReset,

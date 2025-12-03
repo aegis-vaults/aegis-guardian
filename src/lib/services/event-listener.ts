@@ -364,6 +364,7 @@ export class EventListenerService {
           publicKey: event.vaultPda,
           owner: event.owner,
           guardian: event.guardian,
+          agentSigner: event.owner, // Use owner as initial agentSigner, will be updated on sync
           dailyLimit: event.dailyLimit,
           dailySpent: BigInt(0),
           lastResetTime: event.timestamp,

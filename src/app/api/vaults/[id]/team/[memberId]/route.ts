@@ -35,7 +35,7 @@ export async function PATCH(
     const userRole = await prisma.teamMember.findUnique({
       where: {
         userId_vaultId: {
-          userId: authContext.userId,
+          userId: authContext.user.id,
           vaultId: id,
         },
       },
@@ -122,7 +122,7 @@ export async function PATCH(
   } catch (error: any) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(
-        { success: false, error: 'Invalid request data', details: error.errors },
+        { success: false, error: 'Invalid request data', details: error.issues },
         { status: 400 }
       )
     }
@@ -159,7 +159,7 @@ export async function DELETE(
     const userRole = await prisma.teamMember.findUnique({
       where: {
         userId_vaultId: {
-          userId: authContext.userId,
+          userId: authContext.user.id,
           vaultId: id,
         },
       },

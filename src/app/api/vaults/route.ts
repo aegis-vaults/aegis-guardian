@@ -171,6 +171,7 @@ export async function GET(request: NextRequest) {
  *   "publicKey": "string",
  *   "owner": "string",
  *   "guardian": "string",
+ *   "agentSigner": "string",
  *   "dailyLimit": "string",
  *   "overrideDelay": number
  * }
@@ -179,6 +180,7 @@ const CreateVaultSchema = z.object({
   publicKey: SolanaPublicKeySchema,
   owner: SolanaPublicKeySchema,
   guardian: SolanaPublicKeySchema,
+  agentSigner: SolanaPublicKeySchema,
   dailyLimit: z.string().regex(/^\d+$/, 'Daily limit must be a valid number'),
   overrideDelay: z.number().int().min(0).max(86400), // Max 24 hours
 })
@@ -193,7 +195,7 @@ export async function POST(request: NextRequest) {
       throw new ValidationError('Invalid request body', validationResult.error.issues)
     }
 
-    const { publicKey, owner, guardian, dailyLimit, overrideDelay } = validationResult.data
+    const { publicKey, owner, guardian, agentSigner, dailyLimit, overrideDelay } = validationResult.data
 
     // Check if vault already exists
     const existing = await prisma.vault.findUnique({
@@ -219,6 +221,7 @@ export async function POST(request: NextRequest) {
         publicKey,
         owner,
         guardian,
+        agentSigner,
         dailyLimit: BigInt(dailyLimit),
         dailySpent: BigInt(0),
         lastResetTime: BigInt(Math.floor(Date.now() / 1000)),

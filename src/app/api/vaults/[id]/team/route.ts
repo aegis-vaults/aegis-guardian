@@ -3,7 +3,7 @@ import { z } from 'zod'
 import prisma from '@/lib/db'
 import { CacheService } from '@/lib/redis'
 import logger from '@/lib/logger'
-import { getAuthContext, hasVaultAccess } from '@/lib/auth'
+import { getAuthContext } from '@/lib/auth'
 
 const cache = new CacheService()
 
@@ -32,11 +32,19 @@ export async function GET(
       )
     }
 
-    // Check if user has access to this vault
-    const hasAccess = await hasVaultAccess(authContext.userId, id)
-    if (!hasAccess) {
+    // Check if user has access to this vault via team membership
+    const teamMember = await prisma.teamMember.findUnique({
+      where: {
+        userId_vaultId: {
+          userId: authContext.user.id,
+          vaultId: id,
+        },
+      },
+    })
+
+    if (!teamMember) {
       return NextResponse.json(
-        { success: false, error: 'Forbidden' },
+        { success: false, error: 'Forbidden: Not a team member of this vault' },
         { status: 403 }
       )
     }
@@ -59,7 +67,6 @@ export async function GET(
             tier: true,
             email: true,
             telegramUsername: true,
-            notificationPreferences: true,
           },
         },
       },
@@ -106,7 +113,7 @@ export async function POST(
     const userRole = await prisma.teamMember.findUnique({
       where: {
         userId_vaultId: {
-          userId: authContext.userId,
+          userId: authContext.user.id,
           vaultId: id,
         },
       },
@@ -134,7 +141,7 @@ export async function POST(
       user = await prisma.user.create({
         data: {
           walletAddress: validatedData.userWalletAddress,
-          tier: 'FREE',
+          tier: 'PERSONAL',
         },
       })
     }
@@ -192,7 +199,7 @@ export async function POST(
   } catch (error: any) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(
-        { success: false, error: 'Invalid request data', details: error.errors },
+        { success: false, error: 'Invalid request data', details: error.issues },
         { status: 400 }
       )
     }
