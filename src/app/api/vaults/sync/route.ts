@@ -61,7 +61,23 @@ export async function POST(request: NextRequest) {
     const connection = new Connection(rpcUrl, 'confirmed')
 
     // Fetch the vault account from chain
-    const vaultPubkey = new PublicKey(vaultPublicKey)
+    let vaultPubkey: PublicKey
+    try {
+      vaultPubkey = new PublicKey(vaultPublicKey)
+    } catch (e) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'INVALID_PUBLIC_KEY',
+            message: 'Invalid vault public key format',
+          },
+        } as ApiResponse<never>,
+        { status: 400 }
+      )
+    }
+
+    logger.info({ vaultPublicKey, rpcUrl }, 'Fetching vault from Solana')
     const accountInfo = await connection.getAccountInfo(vaultPubkey)
 
     if (!accountInfo) {
@@ -154,6 +170,17 @@ export async function POST(request: NextRequest) {
 
     const paused = data.readUInt8(offset) === 1
     offset += 1
+
+    logger.info({
+      vaultPublicKey,
+      authority,
+      agentSigner,
+      dailyLimit: dailyLimit.toString(),
+      paused,
+      nameLen,
+      name,
+      userWallet: user.walletAddress
+    }, 'Parsed vault account data')
 
     // Verify the user is the owner
     if (authority !== user.walletAddress) {
@@ -256,14 +283,15 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    logger.error({ error }, 'Failed to sync vault')
+    const errorMessage = error instanceof Error ? error.message : String(error)
+    logger.error({ error: errorMessage, stack: error instanceof Error ? error.stack : undefined }, 'Failed to sync vault')
 
     return NextResponse.json(
       {
         success: false,
         error: {
           code: 'INTERNAL_ERROR',
-          message: 'Failed to sync vault from blockchain',
+          message: `Failed to sync vault from blockchain: ${errorMessage}`,
         },
       } as ApiResponse<never>,
       { status: 500 }
