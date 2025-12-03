@@ -32,7 +32,21 @@ export async function GET(
       )
     }
 
-    // Check if user has access to this vault via team membership
+    // Check if user has access to this vault (either owner or team member)
+    const vault = await prisma.vault.findUnique({
+      where: { id },
+      select: { userId: true },
+    })
+
+    if (!vault) {
+      return NextResponse.json(
+        { success: false, error: 'Vault not found' },
+        { status: 404 }
+      )
+    }
+
+    // Allow vault owner OR team members to access
+    const isOwner = vault.userId === authContext.user.id
     const teamMember = await prisma.teamMember.findUnique({
       where: {
         userId_vaultId: {
@@ -42,9 +56,9 @@ export async function GET(
       },
     })
 
-    if (!teamMember) {
+    if (!isOwner && !teamMember) {
       return NextResponse.json(
-        { success: false, error: 'Forbidden: Not a team member of this vault' },
+        { success: false, error: 'Forbidden: Not authorized for this vault' },
         { status: 403 }
       )
     }
@@ -109,7 +123,21 @@ export async function POST(
       )
     }
 
-    // Check if user has OWNER or ADMIN role on this vault
+    // Check if user is vault owner or has OWNER/ADMIN role
+    const vault = await prisma.vault.findUnique({
+      where: { id },
+      select: { userId: true },
+    })
+
+    if (!vault) {
+      return NextResponse.json(
+        { success: false, error: 'Vault not found' },
+        { status: 404 }
+      )
+    }
+
+    const isVaultOwner = vault.userId === authContext.user.id
+
     const userRole = await prisma.teamMember.findUnique({
       where: {
         userId_vaultId: {
@@ -120,7 +148,9 @@ export async function POST(
       select: { role: true },
     })
 
-    if (!userRole || (userRole.role !== 'OWNER' && userRole.role !== 'ADMIN')) {
+    const hasPermission = isVaultOwner || (userRole && (userRole.role === 'OWNER' || userRole.role === 'ADMIN'))
+
+    if (!hasPermission) {
       return NextResponse.json(
         { success: false, error: 'Forbidden: Insufficient permissions' },
         { status: 403 }

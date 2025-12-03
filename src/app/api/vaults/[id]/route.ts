@@ -105,8 +105,12 @@ export async function GET(
     await cache.set(cacheKey, serializedVault, 30)
 
     return NextResponse.json({ success: true, data: serializedVault })
-  } catch (error) {
-    logger.error({ error, vaultId: id }, 'Failed to fetch vault')
+  } catch (error: any) {
+    logger.error({ 
+      error: error?.message || error, 
+      stack: error?.stack,
+      vaultId: id 
+    }, 'Failed to fetch vault')
 
     if (error instanceof NotFoundError) {
       return NextResponse.json(
@@ -116,7 +120,7 @@ export async function GET(
     }
 
     return NextResponse.json(
-      { success: false, error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
+      { success: false, error: { code: 'INTERNAL_ERROR', message: error?.message || 'Internal server error' } },
       { status: 500 }
     )
   }
