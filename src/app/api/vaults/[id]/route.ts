@@ -207,6 +207,8 @@ export async function PATCH(
         }),
         ...(validatedData.paused !== undefined && {
           paused: validatedData.paused,
+          // Keep isActive in sync with paused (isActive = !paused)
+          isActive: !validatedData.paused,
         }),
         ...(validatedData.whitelistEnabled !== undefined && {
           whitelistEnabled: validatedData.whitelistEnabled,
