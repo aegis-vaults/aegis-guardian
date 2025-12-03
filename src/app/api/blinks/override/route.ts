@@ -19,7 +19,7 @@ import {
   SystemProgram,
   LAMPORTS_PER_SOL,
 } from '@solana/web3.js'
-import BN from 'bn.js'
+import { BN } from '@coral-xyz/anchor'
 import logger from '@/lib/logger'
 
 // Aegis Program ID
