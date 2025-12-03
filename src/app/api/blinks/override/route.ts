@@ -207,7 +207,7 @@ export async function POST(request: NextRequest) {
     transaction.add(createOverrideIx)
 
     // Get recent blockhash
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed')
+    const { blockhash } = await connection.getLatestBlockhash('confirmed')
     transaction.recentBlockhash = blockhash
     transaction.feePayer = signerPubkey
 
