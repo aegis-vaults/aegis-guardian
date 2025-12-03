@@ -79,64 +79,120 @@ export class NotificationService {
             }
         }, 'Sending override notification')
 
-        const promises: Promise<void>[] = []
+        // Track which channels we're sending to and their results
+        const channelPromises: { channel: string; promise: Promise<void> }[] = []
 
         if (user.telegramChatId) {
-            promises.push(this.sendTelegram(user.telegramChatId, payload))
+            channelPromises.push({
+                channel: 'telegram',
+                promise: this.sendTelegram(user.telegramChatId, payload)
+            })
         }
 
         if (user.discordWebhook) {
-            promises.push(this.sendDiscord(user.discordWebhook, payload))
+            channelPromises.push({
+                channel: 'discord',
+                promise: this.sendDiscord(user.discordWebhook, payload)
+            })
         }
 
         if (user.email) {
-            promises.push(this.sendEmail(user.email, payload))
+            channelPromises.push({
+                channel: 'email',
+                promise: this.sendEmail(user.email, payload)
+            })
         }
 
         if (user.webhookUrl) {
-            promises.push(this.sendWebhook(user.webhookUrl, payload))
+            channelPromises.push({
+                channel: 'webhook',
+                promise: this.sendWebhook(user.webhookUrl, payload)
+            })
         }
 
-        const results = await Promise.allSettled(promises)
+        if (channelPromises.length === 0) {
+            logger.warn({
+                userId: user.id,
+                vaultId: vault.id,
+                userHasTelegram: !!user.telegramChatId,
+                userHasDiscord: !!user.discordWebhook,
+                userHasEmail: !!user.email,
+                userHasWebhook: !!user.webhookUrl,
+            }, 'No notification channels configured for user')
+            return
+        }
 
+        const results = await Promise.allSettled(channelPromises.map(cp => cp.promise))
+
+        // Build detailed result summary
+        const channelResults: Record<string, { success: boolean; error?: string }> = {}
         results.forEach((result, index) => {
-            if (result.status === 'rejected') {
-                logger.error({ error: result.reason, channelIndex: index }, 'Failed to send notification')
+            const channel = channelPromises[index].channel
+            if (result.status === 'fulfilled') {
+                channelResults[channel] = { success: true }
+            } else {
+                const errorMessage = result.reason instanceof Error 
+                    ? result.reason.message 
+                    : String(result.reason)
+                channelResults[channel] = { success: false, error: errorMessage }
+                logger.error({ 
+                    channel, 
+                    errorMessage,
+                    userId: user.id,
+                    vaultId: vault.id,
+                }, `${channel} notification failed`)
             }
         })
 
+        const successCount = results.filter(r => r.status === 'fulfilled').length
+        const failCount = results.filter(r => r.status === 'rejected').length
+
         logger.info({
             userId: user.id,
-            successCount: results.filter(r => r.status === 'fulfilled').length
-        }, 'Notifications processed')
+            vaultId: vault.id,
+            successCount,
+            failCount,
+            channelResults,
+        }, `Notifications processed: ${successCount} succeeded, ${failCount} failed`)
     }
 
     private async sendTelegram(chatId: string, payload: NotificationPayload): Promise<void> {
-        try {
-            const token = process.env.TELEGRAM_BOT_TOKEN
-            if (!token) {
-                logger.warn('TELEGRAM_BOT_TOKEN not set')
-                return
-            }
+        const token = process.env.TELEGRAM_BOT_TOKEN
+        if (!token) {
+            const error = new Error('TELEGRAM_BOT_TOKEN not set - cannot send Telegram notification')
+            logger.error({ chatId }, error.message)
+            throw error
+        }
 
+        try {
             // Truncate destination for display
             const shortDest = `${payload.destination.slice(0, 6)}...${payload.destination.slice(-4)}`
+
+            // Escape special markdown characters in dynamic content
+            const escapedVaultName = payload.vaultName.replace(/[_*[\]()~`>#+=|{}.!-]/g, '\\$&')
+            const escapedReason = payload.reason.replace(/[_*[\]()~`>#+=|{}.!-]/g, '\\$&')
+            const escapedExpires = payload.expiresAt.replace(/[_*[\]()~`>#+=|{}.!-]/g, '\\$&')
 
             const message = `
 🛡️ *Aegis Override Request*
 
 ━━━━━━━━━━━━━━━━━━━━
-📦 *Vault:* ${payload.vaultName}
+📦 *Vault:* ${escapedVaultName}
 💰 *Amount:* ${payload.amount} SOL
 📍 *To:* \`${shortDest}\`
-⚠️ *Reason:* ${payload.reason}
-⏰ *Expires:* ${payload.expiresAt}
+⚠️ *Reason:* ${escapedReason}
+⏰ *Expires:* ${escapedExpires}
 ━━━━━━━━━━━━━━━━━━━━
 
 Click below to approve this transaction in your Solana wallet.
       `.trim()
 
-            logger.info({ chatId, vaultName: payload.vaultName, blinkUrl: payload.blinkUrl }, 'Sending Telegram notification')
+            logger.info({ 
+                chatId, 
+                vaultName: payload.vaultName, 
+                blinkUrl: payload.blinkUrl,
+                tokenPresent: true,
+            }, 'Sending Telegram notification')
 
             const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
                 method: 'POST',
@@ -153,20 +209,40 @@ Click below to approve this transaction in your Solana wallet.
                 })
             })
 
+            const responseBody = await response.text()
+            
             if (!response.ok) {
-                const errorText = await response.text()
-                throw new Error(`Telegram API error: ${response.statusText} - ${errorText}`)
+                logger.error({ 
+                    chatId, 
+                    status: response.status,
+                    statusText: response.statusText,
+                    body: responseBody,
+                }, 'Telegram API returned error')
+                throw new Error(`Telegram API error: ${response.status} ${response.statusText} - ${responseBody}`)
             }
             
-            logger.info({ chatId }, 'Telegram notification sent successfully')
+            logger.info({ chatId, response: responseBody }, 'Telegram notification sent successfully')
         } catch (error) {
-            logger.error({ error, chatId, blinkUrl: payload.blinkUrl }, 'Telegram notification failed')
+            const errorMessage = error instanceof Error ? error.message : String(error)
+            logger.error({ errorMessage, chatId, blinkUrl: payload.blinkUrl }, 'Telegram notification failed')
             throw error
         }
     }
 
     private async sendDiscord(webhookUrl: string, payload: NotificationPayload): Promise<void> {
+        if (!webhookUrl || !webhookUrl.startsWith('https://discord.com/api/webhooks/')) {
+            const error = new Error(`Invalid Discord webhook URL: ${webhookUrl?.slice(0, 50)}...`)
+            logger.error({ webhookUrl: webhookUrl?.slice(0, 50) }, error.message)
+            throw error
+        }
+
         try {
+            logger.info({ 
+                webhookUrl: webhookUrl.slice(0, 60) + '...',
+                vaultName: payload.vaultName,
+                blinkUrl: payload.blinkUrl,
+            }, 'Sending Discord notification')
+
             const response = await fetch(webhookUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -177,7 +253,7 @@ Click below to approve this transaction in your Solana wallet.
                         fields: [
                             { name: 'Vault', value: payload.vaultName, inline: true },
                             { name: 'Amount', value: `${payload.amount} SOL`, inline: true },
-                            { name: 'Destination', value: `\`${payload.destination}\`` },
+                            { name: 'Destination', value: `\`${payload.destination.slice(0, 8)}...${payload.destination.slice(-8)}\`` },
                             { name: 'Reason', value: payload.reason },
                             { name: 'Expires', value: payload.expiresAt }
                         ],
@@ -188,15 +264,30 @@ Click below to approve this transaction in your Solana wallet.
             })
 
             if (!response.ok) {
-                throw new Error(`Discord API error: ${response.statusText}`)
+                const responseBody = await response.text()
+                logger.error({ 
+                    status: response.status,
+                    statusText: response.statusText,
+                    body: responseBody,
+                }, 'Discord API returned error')
+                throw new Error(`Discord API error: ${response.status} ${response.statusText} - ${responseBody}`)
             }
+
+            logger.info({ webhookUrl: webhookUrl.slice(0, 60) + '...' }, 'Discord notification sent successfully')
         } catch (error) {
-            logger.error({ error, webhookUrl }, 'Discord notification failed')
+            const errorMessage = error instanceof Error ? error.message : String(error)
+            logger.error({ errorMessage, webhookUrl: webhookUrl?.slice(0, 50) }, 'Discord notification failed')
             throw error
         }
     }
 
     private async sendEmail(to: string, payload: NotificationPayload): Promise<void> {
+        if (!process.env.SENDGRID_API_KEY) {
+            const error = new Error('SENDGRID_API_KEY not set - cannot send email notification')
+            logger.error({ to }, error.message)
+            throw error
+        }
+
         try {
             // Log the email being sent for debugging
             logger.info({ to, vaultName: payload.vaultName, blinkUrl: payload.blinkUrl }, 'Sending email notification')
