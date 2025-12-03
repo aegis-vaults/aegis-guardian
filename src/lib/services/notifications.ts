@@ -30,36 +30,30 @@ export class NotificationService {
      */
     async sendOverrideNotification(
         override: Override,
-        vault: Vault & { name?: string }, // Vault might not have name in schema yet, handling gracefully
+        vault: Vault & { name?: string },
         user: User
     ): Promise<void> {
+        // Fetch transaction details to get amount, destination, and block reason
+        let transactionDetails
+        try {
+            const prisma = await import('../db').then(m => m.default)
+            transactionDetails = await prisma.transaction.findUnique({
+                where: { signature: override.transactionId }
+            })
+        } catch (error) {
+            logger.error({ error, overrideId: override.id }, 'Failed to fetch transaction details for notification')
+        }
+
         const payload: NotificationPayload = {
-            amount: (Number(override.requestedAmount || 0) / 1e9).toFixed(4),
-            destination: override.destination || 'Unknown', // Assuming destination is stored on override or transaction
-            reason: 'Policy Violation', // Should come from transaction block reason
+            amount: transactionDetails
+                ? (Number(transactionDetails.amount) / 1e9).toFixed(4)
+                : (Number(override.requestedAmount || 0) / 1e9).toFixed(4),
+            destination: transactionDetails?.to || override.destination || 'Unknown',
+            reason: transactionDetails?.blockReason || 'Policy Violation',
             blinkUrl: override.blinkUrl || '',
             expiresAt: new Date(Number(override.expiresAt) * 1000).toLocaleString(),
             vaultName: vault.name || vault.publicKey.slice(0, 8),
         }
-
-        // We need to fetch the transaction to get the destination and reason if not on override
-        // For now, using placeholders or what's available on override if schema supports it
-        // Note: Schema for Override doesn't have destination/amount directly in the snippet provided earlier, 
-        // but the prompt implies it. I will assume they exist or are accessible.
-        // Actually, looking at schema provided in prompt 11/12/62:
-        // Override has: transactionId, nonce, requestedBy, etc.
-        // Transaction has: amount, destination, blockReason.
-        // I should probably fetch the transaction details if not passed in.
-        // For this implementation, I'll assume the caller passes enriched objects or I'd need to fetch.
-        // But the signature is (override, vault, user).
-        // Let's assume override object has these fields or we handle it gracefully.
-        // Wait, the schema in step 62 shows Override has NO amount/destination.
-        // Transaction has them.
-        // I should probably update the signature or fetch transaction.
-        // But I can't easily change the signature requested by the user without changing the plan.
-        // I'll add a TODO or try to fetch if I had the transaction ID.
-        // For now, I will assume the `override` object passed in might include the transaction relation
-        // or I will just log what I have.
 
         const promises: Promise<void>[] = []
 
