@@ -172,8 +172,7 @@ export async function POST(request: NextRequest) {
     const paused = data.readUInt8(offset) === 1
     offset += 1
 
-    // Read override_nonce (8 bytes)
-    const overrideNonce = data.readBigUInt64LE(offset)
+    // Skip override_nonce (8 bytes) - not stored in database
     offset += 8
 
     // Read vault_nonce (8 bytes) - used for PDA derivation
