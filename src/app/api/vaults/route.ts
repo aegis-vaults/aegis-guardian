@@ -109,6 +109,7 @@ export async function GET(request: NextRequest) {
           dailyLimit: vault.dailyLimit.toString(),
           dailySpent: vault.dailySpent.toString(),
           lastResetTime: vault.lastResetTime.toString(),
+          vaultNonce: vault.vaultNonce.toString(),
         })),
         pagination: {
           total,
@@ -246,6 +247,7 @@ export async function POST(request: NextRequest) {
           dailyLimit: vault.dailyLimit.toString(),
           dailySpent: vault.dailySpent.toString(),
           lastResetTime: vault.lastResetTime.toString(),
+          vaultNonce: vault.vaultNonce.toString(),
         },
       } as ApiResponse<unknown>,
       { status: 201 }

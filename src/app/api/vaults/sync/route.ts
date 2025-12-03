@@ -172,6 +172,14 @@ export async function POST(request: NextRequest) {
     const paused = data.readUInt8(offset) === 1
     offset += 1
 
+    // Read override_nonce (8 bytes)
+    const overrideNonce = data.readBigUInt64LE(offset)
+    offset += 8
+
+    // Read vault_nonce (8 bytes) - used for PDA derivation
+    const vaultNonce = data.readBigUInt64LE(offset)
+    offset += 8
+
     logger.info({
       vaultPublicKey,
       authority,
@@ -180,6 +188,7 @@ export async function POST(request: NextRequest) {
       paused,
       nameLen,
       name,
+      vaultNonce: vaultNonce.toString(),
       userWallet: user.walletAddress
     }, 'Parsed vault account data')
 
@@ -215,6 +224,7 @@ export async function POST(request: NextRequest) {
         isActive: !paused, // paused vault = not active
         userId: user.id, // Link to user
         name,
+        vaultNonce, // Store the nonce for PDA derivation
       },
       update: {
         owner: authority,
@@ -225,6 +235,7 @@ export async function POST(request: NextRequest) {
         whitelistEnabled: whitelistCount > 0,
         isActive: !paused,
         userId: user.id, // Link to user
+        vaultNonce, // Update nonce if changed
         ...(name && { name }),
       },
     })
@@ -246,6 +257,7 @@ export async function POST(request: NextRequest) {
           dailyLimit: vault.dailyLimit.toString(),
           dailySpent: vault.dailySpent.toString(),
           lastResetTime: vault.lastResetTime.toString(),
+          vaultNonce: vault.vaultNonce.toString(), // Include nonce for frontend
           agentSigner, // Include from on-chain data
         },
       } as ApiResponse<unknown>,
