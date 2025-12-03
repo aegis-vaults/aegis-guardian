@@ -1,0 +1,9 @@
+{
+  "rules": [
+    {
+      "pathPattern": "/api/blinks/**",
+      "apiPath": "/api/blinks/**"
+    }
+  ]
+}
+
