@@ -172,9 +172,13 @@ export class EventListenerService {
   private async startPolling(): Promise<void> {
     this.isRunning = true
 
-    // Poll for new signatures every 2 seconds
-    const pollInterval = 2000
+    // Poll for new signatures every 2 seconds (with backoff on errors)
+    const basePollInterval = 2000
+    const maxPollInterval = 30000 // Max 30 seconds between polls on repeated errors
+    let currentPollInterval = basePollInterval
     let lastSignature: string | null = null
+    let consecutiveErrors = 0
+    let lastErrorMessage: string | null = null
 
     const poll = async () => {
       if (!this.isRunning) return
@@ -219,17 +223,38 @@ export class EventListenerService {
             lastSignature = lastSig.signature
           }
         }
-      } catch (error) {
-        logger.error({ error }, 'Error during polling')
+
+        // Reset error state on success
+        if (consecutiveErrors > 0) {
+          logger.info('Event listener polling recovered')
+        }
+        consecutiveErrors = 0
+        currentPollInterval = basePollInterval
+        lastErrorMessage = null
+      } catch (error: any) {
+        consecutiveErrors++
+        const errorMessage = error?.message || String(error)
+
+        // Only log if this is a new error or every 10th consecutive error
+        if (errorMessage !== lastErrorMessage || consecutiveErrors % 10 === 1) {
+          logger.error(
+            { error: errorMessage, consecutiveErrors, nextRetryIn: currentPollInterval },
+            'Event listener polling error'
+          )
+          lastErrorMessage = errorMessage
+        }
+
+        // Exponential backoff on repeated errors (up to max)
+        currentPollInterval = Math.min(currentPollInterval * 1.5, maxPollInterval)
       }
 
       // Schedule next poll
-      setTimeout(poll, pollInterval)
+      setTimeout(poll, currentPollInterval)
     }
 
     // Start polling
     poll()
-    logger.info({ pollInterval }, 'Polling event listener started')
+    logger.info({ pollInterval: basePollInterval }, 'Polling event listener started')
   }
 
   /**
