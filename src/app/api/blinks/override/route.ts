@@ -112,7 +112,7 @@ export async function GET(request: NextRequest) {
       type: 'action',
       icon: 'https://aegis-vaults.xyz/aegis-icon.png',
       title: 'Aegis Override Request',
-      description: `Approve override for ${amountSol.toFixed(4)} SOL transfer. Reason: ${reason.replace(/_/g, ' ')}`,
+      description: `Approve override for ${amountSol.toFixed(4)} SOL transfer. Reason: ${reason.replace(/_/g, ' ')}. (Devnet: If you see a timeout, check your vault - the tx may have succeeded.)`,
       label: 'Approve Override',
       links: {
         actions: [
@@ -233,10 +233,10 @@ export async function POST(request: NextRequest) {
     // Build all instructions
     const instructions: TransactionInstruction[] = []
     
-    // Add compute budget instructions - use high priority fee for faster confirmation on devnet
-    // Devnet can be unreliable, so we use aggressive priority fees
-    instructions.push(ComputeBudgetProgram.setComputeUnitLimit({ units: 150000 })) // Reduced from 400k - simulation shows ~45k used
-    instructions.push(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1000000 })) // 1M microLamports = high priority
+    // Add compute budget instructions - use maximum priority fee for fastest confirmation on devnet
+    // Devnet can be unreliable with slow confirmation times
+    instructions.push(ComputeBudgetProgram.setComputeUnitLimit({ units: 100000 })) // Reduced - simulation shows ~43k used
+    instructions.push(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 10000000 })) // 10M microLamports = maximum priority
     
     // 1. Build create_override instruction
     // Always include create - if it already exists, the program will error, but that's better than missing it
@@ -312,8 +312,9 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Get recent blockhash with finalized commitment for better reliability
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized')
+    // Get recent blockhash with confirmed commitment for faster confirmation
+    // Using 'confirmed' instead of 'finalized' because devnet finalized can be slow
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed')
 
     // Create versioned transaction (v0) - better supported by modern wallets and Blinks
     const messageV0 = new TransactionMessage({
@@ -390,11 +391,12 @@ export async function POST(request: NextRequest) {
     }, 'Created complete versioned override transaction (create + approve + execute)')
 
     // Return Solana Actions response
+    // Note: Devnet can show timeout but tx may still succeed - check vault balance
     return NextResponse.json(
       {
         type: 'transaction',
         transaction: serializedTx.toString('base64'),
-        message: `Approve and execute override: ${(Number(amountLamports) / LAMPORTS_PER_SOL).toFixed(4)} SOL to ${destination.slice(0, 8)}...`,
+        message: `Override ${(Number(amountLamports) / LAMPORTS_PER_SOL).toFixed(4)} SOL transfer. Note: If you see a timeout, the transaction may still succeed - check your vault.`,
       },
       { headers: ACTIONS_CORS_HEADERS }
     )
