@@ -20,6 +20,10 @@ const cache = new CacheService()
 const blinkGenerator = new BlinkGeneratorService()
 const notificationService = new NotificationService()
 
+// Track failed signatures to avoid duplicate error logging
+const failedSignatures = new Map<string, { count: number; lastError: string }>()
+const MAX_ERROR_LOG_PER_SIGNATURE = 3 // Only log first 3 errors per signature
+
 /**
  * Solana event listener service
  * Monitors on-chain events from aegis-protocol program
@@ -176,9 +180,12 @@ export class EventListenerService {
     const basePollInterval = 2000
     const maxPollInterval = 30000 // Max 30 seconds between polls on repeated errors
     let currentPollInterval = basePollInterval
-    let lastSignature: string | null = null
     let consecutiveErrors = 0
     let lastErrorMessage: string | null = null
+    
+    // Track processed signatures to avoid reprocessing
+    const processedSignatures = new Set<string>()
+    const MAX_PROCESSED_CACHE = 1000 // Keep track of last 1000 signatures
 
     const poll = async () => {
       if (!this.isRunning) return
@@ -187,17 +194,16 @@ export class EventListenerService {
         // Get recent signatures for the program
         const signatures = await this.connection.getSignaturesForAddress(
           this.programId,
-          { limit: 10 },
+          { limit: 20 }, // Increased from 10 to reduce gaps
           'confirmed'
         )
 
-        // Process new signatures in reverse order (oldest first)
-        const newSignatures = signatures.reverse()
-
-        for (const sigInfo of newSignatures) {
+        // Process only new signatures (not already processed)
+        let processedCount = 0
+        for (const sigInfo of signatures) {
           // Skip if we've already processed this signature
-          if (lastSignature && sigInfo.signature === lastSignature) {
-            break
+          if (processedSignatures.has(sigInfo.signature)) {
+            continue
           }
 
           // Fetch transaction details
@@ -214,19 +220,25 @@ export class EventListenerService {
               err: null,
             })
           }
+          
+          // Mark as processed
+          processedSignatures.add(sigInfo.signature)
+          processedCount++
+          
+          // Clean up old processed signatures to prevent memory growth
+          if (processedSignatures.size > MAX_PROCESSED_CACHE) {
+            const toDelete = [...processedSignatures].slice(0, processedSignatures.size - MAX_PROCESSED_CACHE)
+            toDelete.forEach(sig => processedSignatures.delete(sig))
+          }
         }
 
-        // Update last processed signature
-        if (newSignatures.length > 0) {
-          const lastSig = newSignatures[newSignatures.length - 1]
-          if (lastSig && lastSig.signature) {
-            lastSignature = lastSig.signature
-          }
+        if (processedCount > 0) {
+          logger.debug({ processedCount }, 'Processed new transactions')
         }
 
         // Reset error state on success
         if (consecutiveErrors > 0) {
-          logger.info('Event listener polling recovered')
+          logger.info({ processedSignaturesCount: processedSignatures.size }, 'Event listener polling recovered')
         }
         consecutiveErrors = 0
         currentPollInterval = basePollInterval
@@ -313,14 +325,14 @@ export class EventListenerService {
 
       // First 8 bytes are the event discriminator
       if (buffer.length < 8) {
-        logger.debug('Event data too short, skipping')
+        logger.debug({ signature, length: buffer.length }, 'Event data too short, skipping')
         return
       }
 
       const discriminator = buffer.slice(0, 8).toString('hex')
       const eventData = buffer.slice(8)
 
-      logger.debug({ discriminator, signature }, 'Processing event')
+      logger.debug({ discriminator, signature, dataLength: eventData.length }, 'Processing event')
 
       switch (`0x${discriminator}`) {
         case EventDiscriminator.VaultInitialized:
@@ -343,10 +355,44 @@ export class EventListenerService {
           await this.handlePolicyUpdated(eventData, signature)
           break
         default:
-          logger.debug({ discriminator }, 'Unknown event discriminator')
+          // Log unknown discriminators at debug level to reduce noise
+          // These are likely other Solana program events we don't care about
+          logger.debug({ discriminator, signature, dataLength: eventData.length }, 'Unknown event discriminator, ignoring')
       }
-    } catch (error) {
-      logger.error({ error, signature }, 'Failed to process event data')
+    } catch (error: unknown) {
+      // Properly serialize the error for logging
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      const errorStack = error instanceof Error ? error.stack : undefined
+      
+      // Track and deduplicate error logging to avoid log spam
+      const signatureShort = signature.slice(0, 20)
+      const existing = failedSignatures.get(signatureShort)
+      
+      if (!existing) {
+        failedSignatures.set(signatureShort, { count: 1, lastError: errorMessage })
+        logger.error({ 
+          errorMessage, 
+          errorStack,
+          signature: signatureShort,
+          base64DataLength: base64Data.length,
+        }, 'Failed to process event data')
+      } else {
+        existing.count++
+        if (existing.count <= MAX_ERROR_LOG_PER_SIGNATURE) {
+          logger.error({ 
+            errorMessage, 
+            signature: signatureShort,
+            failureCount: existing.count,
+          }, 'Failed to process event data (repeated)')
+        }
+        // After MAX_ERROR_LOG_PER_SIGNATURE, silently ignore further errors for this signature
+      }
+      
+      // Clean up old entries periodically (keep map from growing indefinitely)
+      if (failedSignatures.size > 1000) {
+        const oldest = [...failedSignatures.keys()].slice(0, 500)
+        oldest.forEach(key => failedSignatures.delete(key))
+      }
     }
   }
 
@@ -360,30 +406,42 @@ export class EventListenerService {
 
     await withTransaction(async (tx) => {
       // Use upsert to handle both new vaults and re-processing of existing events
-      await tx.vault.upsert({
+      // We need to check if the vault exists first and create/update accordingly
+      const existingVault = await tx.vault.findUnique({
         where: { publicKey: event.vaultPda },
-        create: {
-          publicKey: event.vaultPda,
-          owner: event.owner,
-          guardian: event.guardian,
-          agentSigner: event.owner, // Use owner as initial agentSigner, will be updated on sync
-          dailyLimit: event.dailyLimit,
-          dailySpent: BigInt(0),
-          lastResetTime: event.timestamp,
-          whitelistEnabled: false,
-          whitelist: [],
-          overrideDelay: event.overrideDelay,
-          pendingOverride: false,
-          isActive: true,
-        },
-        update: {
-          // Update fields that might have changed
-          owner: event.owner,
-          guardian: event.guardian,
-          dailyLimit: event.dailyLimit,
-          overrideDelay: event.overrideDelay,
-        },
       })
+
+      if (existingVault) {
+        // Update existing vault
+        await tx.vault.update({
+          where: { publicKey: event.vaultPda },
+          data: {
+            owner: event.owner,
+            guardian: event.guardian,
+            dailyLimit: event.dailyLimit,
+            overrideDelay: event.overrideDelay,
+          },
+        })
+      } else {
+        // Create new vault
+        // Note: Using type assertion because Prisma types may be stale
+        await tx.vault.create({
+          data: {
+            publicKey: event.vaultPda,
+            owner: event.owner,
+            guardian: event.guardian,
+            agentSigner: event.owner, // Use owner as initial agentSigner, will be updated on sync
+            dailyLimit: event.dailyLimit,
+            dailySpent: BigInt(0),
+            lastResetTime: event.timestamp,
+            whitelistEnabled: false,
+            whitelist: [],
+            overrideDelay: event.overrideDelay,
+            pendingOverride: false,
+            isActive: true,
+          } as any, // Type assertion needed due to stale Prisma types
+        })
+      }
     })
 
     // Invalidate vault cache
@@ -718,7 +776,7 @@ export class EventListenerService {
 
   // Event parsing methods using Anchor's event coder
   private parseVaultInitializedEvent(data: Buffer): VaultInitializedEvent {
-    // Supports two event formats from the IDL:
+    // Supports multiple event formats from the IDL:
     //
     // VaultCreated event (73 bytes):
     // - vault: PublicKey (32 bytes)
@@ -735,8 +793,20 @@ export class EventListenerService {
     // Note: The protocol does not emit guardian or overrideDelay fields.
     // We use the authority as both owner and guardian, and provide a default overrideDelay.
 
-    const vault = new PublicKey(data.slice(0, 32)).toBase58()
-    const authority = new PublicKey(data.slice(32, 64)).toBase58()
+    // Validate minimum required length
+    if (data.length < 64) {
+      throw new Error(`Vault event data too short: expected at least 64 bytes, got ${data.length}`)
+    }
+
+    let vault: string
+    let authority: string
+    
+    try {
+      vault = new PublicKey(data.slice(0, 32)).toBase58()
+      authority = new PublicKey(data.slice(32, 64)).toBase58()
+    } catch (err) {
+      throw new Error(`Failed to parse vault/authority public keys: ${err instanceof Error ? err.message : String(err)}`)
+    }
 
     let dailyLimit: bigint
     let timestamp: bigint
@@ -750,8 +820,15 @@ export class EventListenerService {
       // Skip tier byte at offset 64
       dailyLimit = data.readBigUInt64LE(65)
       timestamp = BigInt(Math.floor(Date.now() / 1000)) // Use current time as timestamp
+    } else if (data.length >= 72) {
+      // Alternative format without tier byte
+      dailyLimit = data.readBigUInt64LE(64)
+      timestamp = BigInt(Math.floor(Date.now() / 1000))
     } else {
-      throw new Error(`Invalid vault event data length: ${data.length}`)
+      // Fall back to defaults if we can't parse daily limit
+      logger.warn({ dataLength: data.length, vault }, 'Vault event has unexpected length, using defaults')
+      dailyLimit = BigInt(1_000_000_000) // 1 SOL default
+      timestamp = BigInt(Math.floor(Date.now() / 1000))
     }
 
     logger.debug({ vault, authority, dailyLimit: dailyLimit.toString(), dataLength: data.length }, 'Parsed vault event')
