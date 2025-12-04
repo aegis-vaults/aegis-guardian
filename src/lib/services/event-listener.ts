@@ -962,8 +962,8 @@ export class EventListenerService {
     const amount = data.readBigUInt64LE(32)
     const to = new PublicKey(data.slice(40, 72)).toBase58()
     const feeCollected = data.readBigUInt64LE(72)
-    const newBalance = data.readBigUInt64LE(80)
-    const spentToday = data.readBigUInt64LE(88)
+    // Note: new_balance (offset 80) and spent_today (offset 88) are in the event
+    // but not included in TransactionExecutedEvent type
 
     return {
       vaultPda,
@@ -993,15 +993,8 @@ export class EventListenerService {
     const reasonCode = data.readUInt8(32)
     const amount = data.readBigUInt64LE(33)
     const to = new PublicKey(data.slice(41, 73)).toBase58()
-    
-    // Parse Option<u64> for override_nonce
-    let overrideNonce: bigint | undefined
-    if (data.length > 73) {
-      const hasNonce = data.readUInt8(73)
-      if (hasNonce === 1 && data.length >= 82) {
-        overrideNonce = data.readBigUInt64LE(74)
-      }
-    }
+    // Note: override_nonce (Option<u64> at offset 73+) is in the event
+    // but not included in TransactionBlockedEvent type
 
     // Map reason code to string
     const reasonMap: Record<number, string> = {
