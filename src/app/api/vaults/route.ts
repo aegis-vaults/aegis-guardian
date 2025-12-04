@@ -78,6 +78,8 @@ export async function GET(request: NextRequest) {
         select: {
           id: true,
           publicKey: true,
+          name: true,
+          agentSigner: true,
           owner: true,
           guardian: true,
           dailyLimit: true,
