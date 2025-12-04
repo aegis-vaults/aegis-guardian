@@ -539,10 +539,10 @@ export class EventListenerService {
         return
       }
 
-      // Create transaction record
+      // Create transaction record (use signature from parameter, not event)
       const transaction = await tx.transaction.create({
         data: {
-          signature: event.signature,
+          signature: signature, // Use the transaction signature from context
           vaultId: vault.id,
           from: event.from,
           to: event.to,
@@ -607,7 +607,7 @@ export class EventListenerService {
 
       const transaction = await tx.transaction.create({
         data: {
-          signature: event.signature,
+          signature: signature, // Use the transaction signature from context
           vaultId: vault.id,
           from: event.from,
           to: event.to,
@@ -809,11 +809,14 @@ export class EventListenerService {
 
       overrideDetails = override
 
+      // Use vault authority as approver (they signed the override transaction)
+      const approvedBy = event.approvedBy || vault.owner || ''
+      
       await tx.override.update({
         where: { id: override.id },
         data: {
           status: 'APPROVED',
-          approvedBy: event.approvedBy,
+          approvedBy,
           approvedAt: new Date(Number(event.timestamp) * 1000),
         },
       })
@@ -942,69 +945,81 @@ export class EventListenerService {
   }
 
   private parseTransactionExecutedEvent(data: Buffer): TransactionExecutedEvent {
-    // Event data structure:
-    // - vault_pda: PublicKey (32 bytes)
-    // - signature: String (64 bytes base58, but stored as bytes)
-    // - from: PublicKey (32 bytes)
-    // - to: PublicKey (32 bytes)
+    // Event data structure (from IDL):
+    // - vault: PublicKey (32 bytes)
     // - amount: u64 (8 bytes)
+    // - destination: PublicKey (32 bytes)
     // - fee_collected: u64 (8 bytes)
-    // - timestamp: i64 (8 bytes)
+    // - new_balance: u64 (8 bytes)
+    // - spent_today: u64 (8 bytes)
+    // Total: 96 bytes
 
-    if (data.length < 152) {
+    if (data.length < 96) {
       throw new Error(`Invalid TransactionExecuted event data length: ${data.length}`)
     }
 
     const vaultPda = new PublicKey(data.slice(0, 32)).toBase58()
-    const signature = data.slice(32, 96).toString('hex')
-    const from = new PublicKey(data.slice(96, 128)).toBase58()
-    const to = new PublicKey(data.slice(128, 160)).toBase58()
-    const amount = data.readBigUInt64LE(160)
-    const feeCollected = data.readBigUInt64LE(168)
-    const timestamp = data.readBigInt64LE(176)
+    const amount = data.readBigUInt64LE(32)
+    const to = new PublicKey(data.slice(40, 72)).toBase58()
+    const feeCollected = data.readBigUInt64LE(72)
+    const newBalance = data.readBigUInt64LE(80)
+    const spentToday = data.readBigUInt64LE(88)
 
     return {
       vaultPda,
-      signature,
-      from,
+      signature: '', // Not in event, will be filled from transaction context
+      from: vaultPda, // The vault is the sender
       to,
       amount,
       feeCollected,
-      timestamp,
+      timestamp: BigInt(Math.floor(Date.now() / 1000)), // Use current time
     }
   }
 
   private parseTransactionBlockedEvent(data: Buffer): TransactionBlockedEvent {
-    // Event data structure:
-    // - vault_pda: PublicKey (32 bytes)
-    // - signature: String (64 bytes)
-    // - from: PublicKey (32 bytes)
-    // - to: PublicKey (32 bytes)
+    // Event data structure (from IDL):
+    // - vault: PublicKey (32 bytes)
+    // - reason: u8 (1 byte) - BlockReason enum
     // - amount: u64 (8 bytes)
-    // - reason: String (variable length, prefixed with u32 length)
-    // - timestamp: i64 (8 bytes)
+    // - destination: PublicKey (32 bytes)
+    // - override_nonce: Option<u64> (1 byte discriminator + 8 bytes if Some)
+    // Total: 73-82 bytes
 
-    if (data.length < 172) {
+    if (data.length < 73) {
       throw new Error(`Invalid TransactionBlocked event data length: ${data.length}`)
     }
 
     const vaultPda = new PublicKey(data.slice(0, 32)).toBase58()
-    const signature = data.slice(32, 96).toString('hex')
-    const from = new PublicKey(data.slice(96, 128)).toBase58()
-    const to = new PublicKey(data.slice(128, 160)).toBase58()
-    const amount = data.readBigUInt64LE(160)
-    const reasonLength = data.readUInt32LE(168)
-    const reason = data.slice(172, 172 + reasonLength).toString('utf8')
-    const timestamp = data.readBigInt64LE(172 + reasonLength)
+    const reasonCode = data.readUInt8(32)
+    const amount = data.readBigUInt64LE(33)
+    const to = new PublicKey(data.slice(41, 73)).toBase58()
+    
+    // Parse Option<u64> for override_nonce
+    let overrideNonce: bigint | undefined
+    if (data.length > 73) {
+      const hasNonce = data.readUInt8(73)
+      if (hasNonce === 1 && data.length >= 82) {
+        overrideNonce = data.readBigUInt64LE(74)
+      }
+    }
+
+    // Map reason code to string
+    const reasonMap: Record<number, string> = {
+      0: 'NotWhitelisted',
+      1: 'ExceededDailyLimit',
+      2: 'InsufficientFunds',
+      3: 'VaultPaused',
+    }
+    const reason = reasonMap[reasonCode] || `Unknown(${reasonCode})`
 
     return {
       vaultPda,
-      signature,
-      from,
+      signature: '', // Not in event, will be filled from transaction context
+      from: vaultPda, // The vault is the sender
       to,
       amount,
       reason,
-      timestamp,
+      timestamp: BigInt(Math.floor(Date.now() / 1000)),
     }
   }
 
@@ -1038,25 +1053,24 @@ export class EventListenerService {
   }
 
   private parseOverrideApprovedEvent(data: Buffer): OverrideApprovedEvent {
-    // Event data structure:
-    // - vault_pda: PublicKey (32 bytes)
+    // Event data structure (from IDL):
+    // - vault: PublicKey (32 bytes)
     // - nonce: u64 (8 bytes)
-    // - approved_by: PublicKey (32 bytes)
     // - timestamp: i64 (8 bytes)
+    // Total: 48 bytes
 
-    if (data.length < 80) {
+    if (data.length < 48) {
       throw new Error(`Invalid OverrideApproved event data length: ${data.length}`)
     }
 
     const vaultPda = new PublicKey(data.slice(0, 32)).toBase58()
     const nonce = data.readBigUInt64LE(32)
-    const approvedBy = new PublicKey(data.slice(40, 72)).toBase58()
-    const timestamp = data.readBigInt64LE(72)
+    const timestamp = data.readBigInt64LE(40)
 
     return {
       vaultPda,
       nonce,
-      approvedBy,
+      approvedBy: '', // Not in event, will be filled from transaction context
       timestamp,
     }
   }
