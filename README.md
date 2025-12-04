@@ -235,6 +235,8 @@ Ensure all required environment variables are set in production:
 - `PROGRAM_ID` - Deployed program address
 - `JWT_SECRET` - Authentication secret
 - `WEBHOOK_HMAC_SECRET` - Webhook signature secret
+- `BASE_URL` - Guardian API URL (e.g., https://aegis-guardian.railway.app)
+- `APP_BASE_URL` - Frontend app URL for override pages (e.g., https://aegis-vaults.xyz)
 
 ### Database Migrations
 ```bash

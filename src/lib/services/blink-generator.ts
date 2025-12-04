@@ -7,17 +7,18 @@ const logger = createLogger({ service: 'blink-generator' })
 /**
  * Blink generator service for Solana Actions
  *
- * Generates shareable action URLs that comply with the Solana Actions spec:
- * https://solana.com/docs/advanced/actions
+ * Generates shareable override URLs for the self-hosted aegis-app.
+ * This replaces the previous dial.to integration which had timeout issues.
  *
- * Blinks allow users to interact with on-chain programs via shareable links
- * that render as interactive cards in wallets and social media
+ * The URLs point to aegis-app's /override page which handles wallet
+ * connection and transaction signing directly.
  */
 export class BlinkGeneratorService {
   private baseUrl: string
+  private appBaseUrl: string
 
   constructor() {
-    // Ensure BASE_URL is properly set and doesn't contain error messages
+    // Guardian API base URL
     const envBaseUrl = process.env.BASE_URL || ''
     
     // Validate the BASE_URL:
@@ -41,7 +42,21 @@ export class BlinkGeneratorService {
       }, 'BASE_URL is not properly configured')
       this.baseUrl = 'https://aegis-guardian-production.up.railway.app'
     }
-    logger.info({ baseUrl: this.baseUrl }, 'BlinkGeneratorService initialized')
+
+    // App base URL for self-hosted override pages
+    const envAppUrl = process.env.APP_BASE_URL || ''
+    const isValidAppUrl = envAppUrl && envAppUrl.startsWith('http')
+    
+    if (isValidAppUrl) {
+      this.appBaseUrl = envAppUrl.replace(/\/$/, '')
+      logger.info({ appBaseUrl: this.appBaseUrl }, 'Using APP_BASE_URL from environment')
+    } else {
+      // Default to production aegis-app URL
+      this.appBaseUrl = 'https://aegis-vaults.xyz'
+      logger.info({ appBaseUrl: this.appBaseUrl }, 'Using default APP_BASE_URL')
+    }
+
+    logger.info({ baseUrl: this.baseUrl, appBaseUrl: this.appBaseUrl }, 'BlinkGeneratorService initialized')
   }
 
   /**
@@ -135,15 +150,15 @@ export class BlinkGeneratorService {
   }
 
   /**
-   * Generate a Blink for a blocked transaction notification
+   * Generate override URL for a blocked transaction notification
    *
-   * This generates a Solana Blink URL that the vault owner can use to approve
-   * an override for the blocked transaction. The Blink renders in Solana wallets
-   * and social media as an interactive card.
+   * This generates a self-hosted override URL that points to aegis-app's /override page.
+   * The user can connect their wallet directly and approve the transaction without
+   * relying on external services like dial.to (which had timeout issues).
    *
    * @param vaultId - Vault database ID
    * @param transactionId - Transaction database ID
-   * @returns Blink metadata and action URL (both raw API URL and dial.to shareable URL)
+   * @returns Blink metadata and URLs (actionUrl for API compatibility, blinkUrl for user sharing)
    */
   async generateBlockedTransactionBlink(
     vaultId: string,
@@ -170,27 +185,30 @@ export class BlinkGeneratorService {
       }
       const reason = reasonMap[transaction.blockReason || ''] || 'exceeded_daily_limit'
 
-      // Build the action URL with proper query parameters
-      // This uses the /api/blinks/override endpoint which handles Solana Actions protocol
-      const queryParams = new URLSearchParams({
+      // Build the action URL for backwards compatibility with Solana Actions protocol
+      const actionQueryParams = new URLSearchParams({
         vault: vault.publicKey,
         destination: transaction.to,
         amount: transaction.amount.toString(),
         reason,
       })
+      const actionUrl = `${this.baseUrl}/api/blinks/override?${actionQueryParams.toString()}`
       
-      const actionUrl = `${this.baseUrl}/api/blinks/override?${queryParams.toString()}`
-      
-      // Generate the dial.to shareable URL for Blinks
-      // This is what gets shared and renders the interactive card
-      const encodedActionUrl = encodeURIComponent(actionUrl)
-      const blinkUrl = `https://dial.to/?action=solana-action:${encodedActionUrl}`
+      // Generate the self-hosted override URL for aegis-app
+      // This replaces dial.to and eliminates timeout issues
+      const overrideQueryParams = new URLSearchParams({
+        vault: vault.publicKey,
+        destination: transaction.to,
+        amount: transaction.amount.toString(),
+        reason,
+      })
+      const blinkUrl = `${this.appBaseUrl}/override?${overrideQueryParams.toString()}`
 
       const amountSol = this.formatSol(transaction.amount)
       
       const metadata: BlinkMetadata = {
         title: 'Aegis Override Request',
-        icon: `${this.baseUrl}/aegis-icon.png`,
+        icon: `${this.appBaseUrl}/aegis-icon.png`,
         description: `A transaction was blocked and requires your approval. Amount: ${amountSol} SOL to ${this.truncateAddress(transaction.to)}. Reason: ${transaction.blockReason || 'Policy violation'}`,
         label: 'Approve Override',
         links: {
@@ -198,7 +216,7 @@ export class BlinkGeneratorService {
             {
               type: 'transaction',
               label: `Approve ${amountSol} SOL Override`,
-              href: actionUrl,
+              href: blinkUrl, // Point to self-hosted override page
             },
           ],
         },
@@ -235,11 +253,12 @@ export class BlinkGeneratorService {
         amount: transaction.amount.toString(),
         destination: transaction.to,
         reason,
-      }, 'Blocked transaction Blink generated')
+        selfHosted: true,
+      }, 'Self-hosted override URL generated for blocked transaction')
 
       return { blink: metadata, actionUrl, blinkUrl }
     } catch (error) {
-      logger.error({ error, vaultId, transactionId }, 'Failed to generate blocked tx Blink')
+      logger.error({ error, vaultId, transactionId }, 'Failed to generate blocked tx override URL')
       throw error
     }
   }
