@@ -777,16 +777,20 @@ export class EventListenerService {
 
   /**
    * Handle OverrideApproved event
+   * Sends SUCCESS notification to user when their override is approved
    */
   private async handleOverrideApproved(data: Buffer, signature: string): Promise<void> {
     const event = this.parseOverrideApprovedEvent(data)
 
     logger.info({ event, signature }, 'Override approved')
 
+    let vaultWithUser: any = null
+    let overrideDetails: any = null
+
     await withTransaction(async (tx) => {
       const vault = await tx.vault.findUnique({
         where: { publicKey: event.vaultPda },
-        include: { overrides: true },
+        include: { overrides: true, user: true },
       })
 
       if (!vault) {
@@ -794,12 +798,16 @@ export class EventListenerService {
         return
       }
 
+      vaultWithUser = vault
+
       const override = vault.overrides.find((o) => o.nonce === event.nonce)
 
       if (!override) {
         logger.error({ nonce: event.nonce }, 'Override not found')
         return
       }
+
+      overrideDetails = override
 
       await tx.override.update({
         where: { id: override.id },
@@ -810,6 +818,25 @@ export class EventListenerService {
         },
       })
     })
+
+    // Send SUCCESS notification to user
+    if (vaultWithUser?.user && overrideDetails) {
+      try {
+        await notificationService.sendSuccessNotification(
+          vaultWithUser,
+          vaultWithUser.user,
+          {
+            type: 'OVERRIDE_APPROVED',
+            amount: overrideDetails.requestedAmount,
+            destination: overrideDetails.destination,
+            signature,
+          }
+        )
+        logger.info({ vaultId: vaultWithUser.id, signature }, 'Success notification sent for override approval')
+      } catch (error) {
+        logger.error({ error, vaultId: vaultWithUser?.id }, 'Failed to send success notification')
+      }
+    }
   }
 
   /**

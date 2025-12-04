@@ -387,6 +387,135 @@ Click below to approve this transaction in your Solana wallet.
             throw error
         }
     }
+
+    /**
+     * Send SUCCESS notification when an override is approved/executed
+     * This helps users know their transaction succeeded even if dial.to showed a timeout
+     */
+    async sendSuccessNotification(
+        vault: { id: string; publicKey: string; name?: string },
+        user: { id: string; email?: string | null; telegramChatId?: string | null; discordWebhook?: string | null },
+        details: { type: string; amount: bigint | number; destination: string; signature: string }
+    ): Promise<void> {
+        const amountSol = (Number(details.amount) / 1e9).toFixed(4)
+        const shortDest = `${details.destination.slice(0, 8)}...${details.destination.slice(-4)}`
+        const explorerUrl = `https://explorer.solana.com/tx/${details.signature}?cluster=devnet`
+        
+        const message = `✅ Override Approved Successfully!\n\n` +
+            `🛡️ Vault: ${vault.name || 'Unnamed Vault'}\n` +
+            `💰 Amount: ${amountSol} SOL\n` +
+            `📍 To: ${shortDest}\n\n` +
+            `🔗 View on Explorer: ${explorerUrl}\n\n` +
+            `Your override transaction was successfully executed on Solana!`
+
+        logger.info({ userId: user.id, vaultId: vault.id, type: details.type }, 'Sending success notification')
+
+        const promises: Promise<void>[] = []
+
+        // Send Telegram notification
+        if (user.telegramChatId && process.env.TELEGRAM_BOT_TOKEN) {
+            promises.push(
+                fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        chat_id: user.telegramChatId,
+                        text: message,
+                        parse_mode: 'HTML',
+                        reply_markup: {
+                            inline_keyboard: [[
+                                { text: '🔍 View Transaction', url: explorerUrl }
+                            ]]
+                        }
+                    })
+                }).then(res => {
+                    if (!res.ok) throw new Error(`Telegram error: ${res.status}`)
+                    logger.info({ chatId: user.telegramChatId }, 'Success notification sent via Telegram')
+                }).catch(err => {
+                    logger.error({ error: err.message }, 'Failed to send Telegram success notification')
+                })
+            )
+        }
+
+        // Send Discord notification
+        if (user.discordWebhook) {
+            promises.push(
+                fetch(user.discordWebhook, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        embeds: [{
+                            title: '✅ Override Approved Successfully!',
+                            description: `Your override transaction was successfully executed on Solana.`,
+                            color: 0x00ff00, // Green
+                            fields: [
+                                { name: '🛡️ Vault', value: vault.name || 'Unnamed Vault', inline: true },
+                                { name: '💰 Amount', value: `${amountSol} SOL`, inline: true },
+                                { name: '📍 Destination', value: shortDest, inline: true },
+                            ],
+                            footer: { text: 'Aegis Vaults' },
+                            timestamp: new Date().toISOString(),
+                        }],
+                        components: [{
+                            type: 1,
+                            components: [{
+                                type: 2,
+                                style: 5,
+                                label: '🔍 View Transaction',
+                                url: explorerUrl,
+                            }]
+                        }]
+                    })
+                }).then(res => {
+                    if (!res.ok) throw new Error(`Discord error: ${res.status}`)
+                    logger.info({ webhook: user.discordWebhook?.slice(0, 50) }, 'Success notification sent via Discord')
+                }).catch(err => {
+                    logger.error({ error: err.message }, 'Failed to send Discord success notification')
+                })
+            )
+        }
+
+        // Send Email notification
+        if (user.email && process.env.SENDGRID_API_KEY) {
+            const sgMail = await import('@sendgrid/mail').then(m => m.default)
+            sgMail.setApiKey(process.env.SENDGRID_API_KEY)
+            
+            promises.push(
+                sgMail.send({
+                    to: user.email,
+                    from: process.env.SENDGRID_FROM_EMAIL || 'notifications@aegis.finance',
+                    subject: `✅ Override Approved - ${amountSol} SOL transferred`,
+                    html: `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 24px; border-radius: 12px; text-align: center; color: white;">
+    <h1 style="margin: 0; font-size: 24px;">✅ Override Approved!</h1>
+    <p style="margin: 8px 0 0 0; opacity: 0.9;">Your transaction was successfully executed</p>
+  </div>
+  <div style="background: #f3f4f6; border-radius: 8px; padding: 20px; margin: 24px 0;">
+    <table style="width: 100%; border-collapse: collapse;">
+      <tr><td style="padding: 8px 0; color: #6b7280;">Vault</td><td style="padding: 8px 0; text-align: right; font-weight: 600;">${vault.name || 'Unnamed Vault'}</td></tr>
+      <tr><td style="padding: 8px 0; color: #6b7280;">Amount</td><td style="padding: 8px 0; text-align: right; font-weight: 600; color: #10b981;">${amountSol} SOL</td></tr>
+      <tr><td style="padding: 8px 0; color: #6b7280;">Destination</td><td style="padding: 8px 0; text-align: right; font-family: monospace;">${shortDest}</td></tr>
+    </table>
+  </div>
+  <div style="text-align: center;">
+    <a href="${explorerUrl}" style="display: inline-block; background: #10b981; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: 600;">View Transaction on Explorer</a>
+  </div>
+</body>
+</html>`
+                }).then(() => {
+                    logger.info({ to: user.email }, 'Success notification sent via Email')
+                }).catch((err: any) => {
+                    logger.error({ error: err.message }, 'Failed to send Email success notification')
+                })
+            )
+        }
+
+        await Promise.allSettled(promises)
+    }
 }
 
 export const notificationService = new NotificationService()
