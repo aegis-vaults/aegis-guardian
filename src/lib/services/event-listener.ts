@@ -522,6 +522,17 @@ export class EventListenerService {
 
   /**
    * Handle TransactionExecuted event
+   * 
+   * IMPORTANT: When an override is executed via the blink flow, ALL 3 instructions
+   * (create_override, approve_override, execute_approved_override) are in the SAME
+   * Solana transaction with the SAME signature. This means:
+   * 
+   * 1. handleTransactionBlocked runs first (for create_override's TransactionBlocked event)
+   *    - May create a BLOCKED transaction OR update an SDK-reported one
+   * 2. handleTransactionExecuted runs (for execute_approved_override's TransactionExecuted event)
+   *    - Should UPDATE the existing transaction to EXECUTED (same signature)
+   * 
+   * We use upsert logic to handle both regular transactions AND override executions.
    */
   private async handleTransactionExecuted(data: Buffer, signature: string): Promise<void> {
     const event = this.parseTransactionExecutedEvent(data)
@@ -539,19 +550,82 @@ export class EventListenerService {
         return
       }
 
-      // Create transaction record (use signature from parameter, not event)
-      const transaction = await tx.transaction.create({
-        data: {
-          signature: signature, // Use the transaction signature from context
-          vaultId: vault.id,
-          from: event.from,
-          to: event.to,
-          amount: event.amount,
-          status: 'EXECUTED',
-          executedAt: new Date(Number(event.timestamp) * 1000),
-          blockTime: event.timestamp,
-        },
+      // Check if a transaction with this signature already exists (from same tx with BLOCKED event)
+      const existingTx = await tx.transaction.findUnique({
+        where: { signature },
       })
+
+      let transaction
+      let isOverrideExecution = false
+
+      if (existingTx) {
+        // This is an override - the same signature was used for TransactionBlocked
+        // Update the existing transaction from BLOCKED to EXECUTED
+        isOverrideExecution = true
+        
+        transaction = await tx.transaction.update({
+          where: { id: existingTx.id },
+          data: {
+            status: 'EXECUTED',
+            executedAt: new Date(Number(event.timestamp) * 1000),
+            blockTime: event.timestamp,
+          },
+        })
+        
+        logger.info({
+          transactionId: transaction.id,
+          signature: signature.slice(0, 20),
+          previousStatus: existingTx.status,
+        }, 'Updated transaction to EXECUTED (override completed)')
+      } else {
+        // No existing transaction - this is a regular guarded transaction
+        // Check if there's a matching blocked transaction to detect override
+        const recentBlockedTx = await tx.transaction.findFirst({
+          where: {
+            vaultId: vault.id,
+            to: event.to,
+            amount: event.amount,
+            status: 'BLOCKED',
+            createdAt: { gte: new Date(Date.now() - 60 * 60 * 1000) },
+          },
+          orderBy: { createdAt: 'desc' },
+        })
+
+        if (recentBlockedTx) {
+          // This is an override for a transaction that was blocked via SDK
+          // The blocked tx has SDK signature, this has on-chain signature
+          isOverrideExecution = true
+          
+          // Update the blocked transaction to EXECUTED
+          await tx.transaction.update({
+            where: { id: recentBlockedTx.id },
+            data: {
+              status: 'EXECUTED',
+              executedAt: new Date(Number(event.timestamp) * 1000),
+              // Keep the SDK signature or update? Keep it for history
+            },
+          })
+          
+          logger.info({
+            blockedTxId: recentBlockedTx.id,
+            newSignature: signature.slice(0, 20),
+          }, 'Updated SDK-reported blocked transaction to EXECUTED')
+        }
+
+        // Create new transaction record
+        transaction = await tx.transaction.create({
+          data: {
+            signature: signature,
+            vaultId: vault.id,
+            from: event.from,
+            to: event.to,
+            amount: event.amount,
+            status: 'EXECUTED',
+            executedAt: new Date(Number(event.timestamp) * 1000),
+            blockTime: event.timestamp,
+          },
+        })
+      }
 
       // Record fee if present
       if (event.feeCollected && event.feeCollected > BigInt(0)) {
@@ -565,15 +639,23 @@ export class EventListenerService {
         })
       }
 
-      // Update vault daily spent
-      await tx.vault.update({
-        where: { id: vault.id },
-        data: {
-          dailySpent: {
-            increment: event.amount,
+      // Only update daily spent for non-override transactions
+      // Override transactions bypass daily limits on-chain
+      if (!isOverrideExecution) {
+        await tx.vault.update({
+          where: { id: vault.id },
+          data: {
+            dailySpent: {
+              increment: event.amount,
+            },
           },
-        },
-      })
+        })
+      } else {
+        logger.info({
+          vaultId: vault.id,
+          amount: event.amount.toString(),
+        }, 'Skipping daily spent increment for override execution')
+      }
     })
 
     // Invalidate caches
@@ -583,14 +665,24 @@ export class EventListenerService {
 
   /**
    * Handle TransactionBlocked event
+   * 
+   * IMPORTANT: This handles deduplication of blocked transactions.
+   * When a transaction is blocked:
+   * 1. SDK may call /api/transactions/blocked first (creates record with 'sdk-*' signature)
+   * 2. The blink override flow calls create_override which emits TransactionBlocked
+   * 
+   * To avoid double-counting, we check for existing blocked transactions with same
+   * vault/destination/amount and update them with the real on-chain signature instead
+   * of creating duplicates.
    */
   private async handleTransactionBlocked(data: Buffer, signature: string): Promise<void> {
     const event = this.parseTransactionBlockedEvent(data)
 
-    logger.info({ event, signature }, 'Transaction blocked')
+    logger.info({ event, signature }, 'Transaction blocked event received')
 
     let transactionId: string | undefined
     let vaultId: string | undefined
+    let wasUpdated = false
 
     await withTransaction(async (tx) => {
       const vault = await tx.vault.findUnique({
@@ -605,28 +697,83 @@ export class EventListenerService {
 
       vaultId = vault.id
 
-      const transaction = await tx.transaction.create({
-        data: {
-          signature: signature, // Use the transaction signature from context
+      // Check for existing blocked transaction with same vault/destination/amount
+      // This handles the case where SDK already reported the blocked transaction
+      // Look for transactions created in the last hour with matching criteria
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000)
+      
+      const existingTransaction = await tx.transaction.findFirst({
+        where: {
           vaultId: vault.id,
-          from: event.from,
           to: event.to,
           amount: event.amount,
           status: 'BLOCKED',
-          blockReason: event.reason,
-          blockedAt: new Date(Number(event.timestamp) * 1000),
-          blockTime: event.timestamp,
+          createdAt: { gte: oneHourAgo },
         },
+        orderBy: { createdAt: 'desc' },
       })
 
-      transactionId = transaction.id
+      if (existingTransaction) {
+        // Check if existing transaction has SDK-generated signature
+        const isSDKSignature = existingTransaction.signature.startsWith('sdk-')
+        
+        if (isSDKSignature) {
+          // Update the existing transaction with real on-chain signature
+          const updated = await tx.transaction.update({
+            where: { id: existingTransaction.id },
+            data: {
+              signature: signature, // Update with real on-chain signature
+              blockReason: event.reason, // Update reason in case it changed
+              blockTime: event.timestamp,
+            },
+          })
+          
+          transactionId = updated.id
+          wasUpdated = true
+          
+          logger.info({
+            transactionId: updated.id,
+            oldSignature: existingTransaction.signature.slice(0, 20),
+            newSignature: signature.slice(0, 20),
+          }, 'Updated existing SDK-reported blocked transaction with on-chain signature')
+        } else {
+          // Already has a real signature - this is a true duplicate, skip
+          transactionId = existingTransaction.id
+          wasUpdated = true
+          
+          logger.info({
+            transactionId: existingTransaction.id,
+            existingSignature: existingTransaction.signature.slice(0, 20),
+            newSignature: signature.slice(0, 20),
+          }, 'Skipping duplicate blocked transaction - already recorded from chain')
+        }
+      } else {
+        // No existing transaction found - create new one
+        const transaction = await tx.transaction.create({
+          data: {
+            signature: signature,
+            vaultId: vault.id,
+            from: event.from,
+            to: event.to,
+            amount: event.amount,
+            status: 'BLOCKED',
+            blockReason: event.reason,
+            blockedAt: new Date(Number(event.timestamp) * 1000),
+            blockTime: event.timestamp,
+          },
+        })
+
+        transactionId = transaction.id
+        logger.info({ transactionId: transaction.id }, 'Created new blocked transaction record')
+      }
     })
 
     // Invalidate caches
     await cache.deletePattern(`transactions:vault:${event.vaultPda}:*`)
 
     // Generate Blink and send notifications for blocked transaction
-    if (transactionId && vaultId) {
+    // SKIP if we just updated an existing transaction (notification was already sent by SDK flow)
+    if (transactionId && vaultId && !wasUpdated) {
       try {
         // Generate Blink for the blocked transaction
         const { actionUrl } = await blinkGenerator.generateBlockedTransactionBlink(
@@ -678,6 +825,11 @@ export class EventListenerService {
         )
         // Don't throw - event was successfully stored, notification failure shouldn't break the listener
       }
+    } else if (wasUpdated) {
+      logger.info(
+        { vaultId, transactionId },
+        'Skipping notification for blocked transaction - already sent via SDK flow'
+      )
     }
   }
 
@@ -778,6 +930,10 @@ export class EventListenerService {
   /**
    * Handle OverrideApproved event
    * Sends SUCCESS notification to user when their override is approved
+   * 
+   * NOTE: In the blink flow, there may be no Override record because the entire
+   * override process (create + approve + execute) happens in one transaction.
+   * We handle this gracefully by looking up the associated blocked transaction.
    */
   private async handleOverrideApproved(data: Buffer, signature: string): Promise<void> {
     const event = this.parseOverrideApprovedEvent(data)
@@ -803,7 +959,29 @@ export class EventListenerService {
       const override = vault.overrides.find((o) => o.nonce === event.nonce)
 
       if (!override) {
-        logger.error({ nonce: event.nonce }, 'Override not found')
+        // This is likely a blink-based override (all-in-one transaction)
+        // Try to find the corresponding blocked transaction by signature
+        const blockedTx = await tx.transaction.findFirst({
+          where: {
+            signature: signature, // Same signature as the override tx
+            vaultId: vault.id,
+          },
+        })
+
+        if (blockedTx) {
+          // Use the blocked transaction details for the notification
+          overrideDetails = {
+            requestedAmount: blockedTx.amount,
+            destination: blockedTx.to,
+            nonce: event.nonce,
+          }
+          logger.info({ 
+            signature: signature.slice(0, 20), 
+            nonce: event.nonce.toString() 
+          }, 'Override approved via blink flow (no separate Override record)')
+        } else {
+          logger.warn({ nonce: event.nonce.toString() }, 'Override approved but no matching records found')
+        }
         return
       }
 

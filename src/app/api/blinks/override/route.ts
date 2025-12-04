@@ -396,7 +396,7 @@ export async function POST(request: NextRequest) {
       {
         type: 'transaction',
         transaction: serializedTx.toString('base64'),
-        message: `Override ${(Number(amountLamports) / LAMPORTS_PER_SOL).toFixed(4)} SOL transfer. Note: If you see a timeout, the transaction may still succeed - check your vault.`,
+        message: `Override ${(Number(amountLamports) / LAMPORTS_PER_SOL).toFixed(4)} SOL transfer to ${destination.slice(0, 6)}...${destination.slice(-4)}. On devnet, if you see a timeout, the transaction may still succeed - refresh your vault to check!`,
       },
       { headers: ACTIONS_CORS_HEADERS }
     )
