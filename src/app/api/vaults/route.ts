@@ -113,6 +113,9 @@ export async function GET(request: NextRequest) {
           dailySpent: vault.dailySpent.toString(),
           lastResetTime: vault.lastResetTime.toString(),
           vaultNonce: vault.vaultNonce.toString(),
+          // Flatten _count for easier frontend consumption
+          transactionCount: vault._count.transactions,
+          overrideCount: vault._count.overrides,
         })),
         pagination: {
           total,
