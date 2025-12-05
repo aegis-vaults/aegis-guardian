@@ -126,8 +126,8 @@ export async function GET(request: NextRequest) {
       },
     }
 
-    // Cache for 30 seconds (cache failures are non-blocking)
-    await cache.set(cacheKey, response, 30)
+    // Cache for 60 seconds (cache failures are non-blocking)
+    await cache.set(cacheKey, response, 60)
 
     logger.info({ page, pageSize, total, owner, guardian }, 'Vaults listed')
 

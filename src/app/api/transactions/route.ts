@@ -193,8 +193,8 @@ export async function GET(request: NextRequest) {
       },
     }
 
-    // Cache for 15 seconds (shorter TTL since transactions are frequently updated)
-    await cache.set(cacheKey, response, 15)
+    // Cache for 30 seconds 
+    await cache.set(cacheKey, response, 30)
 
     logger.info({
       page,
