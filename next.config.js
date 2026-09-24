@@ -6,7 +6,6 @@ const nextConfig = {
   output: 'standalone',
   serverExternalPackages: ['pino', 'pino-pretty', 'thread-stream'],
   experimental: {
-    instrumentationHook: true,
     serverActions: {
       bodySizeLimit: '2mb',
     },

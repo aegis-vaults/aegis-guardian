@@ -15,8 +15,10 @@ WORKDIR /app
 # Copy package files
 COPY package.json package-lock.json ./
 
-# Install dependencies with clean install
-RUN npm ci --only=production && \
+# The build runs Prisma and Next, both of which are development dependencies.
+# Installing production-only packages here made every Railway Docker build fail
+# before Next could produce the standalone output.
+RUN npm ci && \
     npm cache clean --force
 
 # Stage 2: Builder
@@ -62,6 +64,10 @@ COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
+# Prisma is needed at startup to apply committed production migrations. Copy the
+# CLI and its executable without carrying the complete development dependency tree.
+COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
+COPY --from=builder /app/node_modules/.bin/prisma ./node_modules/.bin/prisma
 
 # Copy migration script
 COPY --from=builder /app/scripts ./scripts
@@ -82,7 +88,7 @@ ENV HOSTNAME="0.0.0.0"
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:3000/api/health || exit 1
+    CMD curl -f http://localhost:3000/api/health/liveness || exit 1
 
 # Start application
-CMD ["node", "server.js"]
+CMD ["sh", "-c", "./node_modules/.bin/prisma migrate deploy && node server.js"]
